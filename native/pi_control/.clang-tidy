@@ -1,0 +1,18 @@
+# Gated in CI (see the clang-tidy job in .github/workflows/ci.yml).
+#
+# Deliberately excluded:
+#  - bugprone-narrowing-conversions / bugprone-easily-swappable-parameters:
+#    ~150 pre-existing stylistic findings; enable after a dedicated cleanup.
+#  - concurrency-mt-unsafe: flags strerror/getenv/etc.; ~90 pre-existing
+#    findings, several on RX-thread paths worth a focused follow-up pass.
+#  - headers (HeaderFilterRegex left empty): ~200 macro-parentheses findings
+#    in pi_command_line_args.hpp/pi_control.hpp; several are string-concat
+#    macros that need conversion to constants rather than parenthesization.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-narrowing-conversions,
+  -bugprone-easily-swappable-parameters,
+  concurrency-*,
+  -concurrency-mt-unsafe
+WarningsAsErrors: '*'

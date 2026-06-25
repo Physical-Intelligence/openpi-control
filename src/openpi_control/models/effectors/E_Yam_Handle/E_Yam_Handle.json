@@ -1,0 +1,58 @@
+{
+ "config_version": "1.1.0",
+ "device_model": "E_Yam_Handle",
+ "device_type": "effector",
+ "effector_type": "arx",
+ "topic_type": "ROS",
+ "driver_type": "CAN",
+ "algo_type": "Algo",
+ "planning_type": "None",
+ "catalog": {
+  "display_label": "E_Yam_Handle: YAM Teaching Handle",
+  "order": 10,
+  "baudrate": 1000000,
+  "need_repeated_command": false
+ },
+ "read_only": true,
+ "publishes_joystick": true,
+ "open_at_min": true,
+ "joints": [
+  {
+   "joint_id": 7,
+   "vel_max": 3.2,
+   "torq_min": 0,
+   "torq_max": 0,
+   "safe_torq_min": 0,
+   "safe_torq_max": 0,
+   "torq_rescale": 1,
+   "pos_rescale": 1,
+   "pos_error_margin": 0.1,
+   "safe_mode_derating": 0.2,
+   "accel_max": 1.0,
+   "spring_constant": 0,
+   "spring_preload": 0,
+   "spring_force_config": false,
+   "spring_type": 0,
+   "threshold_angle_change": 0.00872664625997165,
+   "threshold_time_sec": 0.1,
+   "max_length": 0.07,
+   "servos": [
+    {
+     "servo_model": "CAN Passive Encoder",
+     "servo_id": 1294,
+     "data_index": 6,
+     "dir_invert": 1,
+     "response_delay": 0.025,
+     "kT": 0,
+     "kA": 0,
+     "kV": 0,
+     "pos_kp": 0,
+     "pos_ki": 0,
+     "pos_kd": 0,
+     "joystick_channel_num": 0,
+     "joystick_button_num": 2
+    }
+   ]
+  }
+ ]
+}

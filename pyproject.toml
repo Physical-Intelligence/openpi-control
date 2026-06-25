@@ -1,0 +1,49 @@
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "openpi-control"
+version = "0.1.0"
+description = "OpenPI native control runtime for YAM and ARX robot arms"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "OpenPI Control maintainers" }]
+dependencies = [
+  "numpy>=1.26",
+  "pyzmq>=25",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hypothesis>=6",
+  "pytest>=8",
+  "pytest-cov>=5",
+  "ruff>=0.6",
+]
+
+[tool.scikit-build]
+cmake.version = ">=3.22"
+wheel.py-api = "py3"
+wheel.packages = ["src/openpi_control"]
+wheel.install-dir = ""
+sdist.include = [
+  "native/**",
+  "src/openpi_control/models/**",
+  "tests/**",
+  "scripts/**",
+]
+
+[tool.scikit-build.cmake.define]
+OPENPI_CONTROL_BUILD_NATIVE = "ON"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

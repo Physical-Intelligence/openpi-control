@@ -1,0 +1,36 @@
+{
+    "config_version": "1.1.0",
+    "device_model": "E_Yam",
+    "device_type": "effector",
+    "effector_type": "arx",
+    "spring_effect": false,
+
+    "control_mode": "position",
+    "dist_to_torque_const": 6.67,
+
+    "base_rpy": [
+        0,
+        0,
+        0
+    ],
+    "joints": [
+        {
+            "joint_id": 7,
+            "reference_servo_index": 0,
+            "spring_invert": false,
+            "servos": [
+                {
+                    "servo_id": 7,
+
+                    "pos_min": 0,
+                    "pos_max": 5.4,
+                    "reverse_flag": false,
+                    "zero_pos": 0.0,
+                    "position_wrap_period": 6.283185307179586,
+                    "home_pos": 0,
+                    "spring_home_pos": 0.8
+                }
+            ]
+        }
+    ]
+}

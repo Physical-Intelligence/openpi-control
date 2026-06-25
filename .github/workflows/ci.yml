@@ -1,0 +1,345 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHON_VERSION: "3.11"
+  BUILD_JOBS: "2"
+  UV_LINK_MODE: copy
+
+jobs:
+  python:
+    name: Python API tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python build helpers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes cmake ninja-build
+
+      - name: Install package with native runtime disabled
+        run: |
+          uv venv
+          uv pip install -e '.[dev]' \
+            -C cmake.define.OPENPI_CONTROL_BUILD_NATIVE=OFF
+
+      - name: Ruff
+        run: uv run --no-sync ruff check .
+
+      - name: Pytest
+        run: uv run --no-sync pytest -q tests --ignore=tests/sil
+
+  native:
+    name: Native C++ tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host build dependencies
+        run: |
+          sudo ./scripts/install_build_deps_ubuntu.sh
+          sudo apt-get install --no-install-recommends --yes ccache ninja-build
+
+      - name: Cache native dependencies
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: openpi-control-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_deps.sh') }}
+
+      - name: Cache compiler outputs
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'native/**/CMakeLists.txt', 'native/**/*.cpp', 'native/**/*.h', 'native/**/*.hpp') }}
+          restore-keys: |
+            ccache-native-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build pinned native dependencies
+        run: |
+          if [[ ! -f .deps/pinocchio/install/lib/pkgconfig/pinocchio.pc || ! -f .deps/cppzmq/install/include/zmq.hpp ]]; then
+            ./scripts/build_deps.sh
+            rm -rf .deps/pinocchio/build
+          fi
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-native -G Ninja \
+            -DOPENPI_CONTROL_BUILD_TESTING=ON \
+            -DOPENPI_CONTROL_BUILD_NATIVE=ON \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build-native --target pi_control_tests pi_topic_zmq_tests --parallel "${BUILD_JOBS}"
+          ccache --show-stats
+
+      - name: Run all native tests
+        run: ctest --test-dir build-native --output-on-failure
+
+  native-sanitizers:
+    name: Native targeted ${{ matrix.config.name }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      ASAN_TEST_REGEX: >-
+        ^(DriverCanTransport.RejectsTruncatedFrames|DriverCanTransport.RejectsInvalidBuffersBeforeIo|DriverArxTransport.RejectsTruncatedReceivedFrames|DriverArxTransport.RejectsServoDataIndexOutsideReceiveCache|DriverArxTransport.SendCommandRejectsInvalidCanFrameBeforeWrite|ServoDmParser.*|TopicZmqPublishBoundsTest.*|TopicZmqStep.ReportsMalformedJointPayload|TopicZmqJoystickCount.RejectsInvalidCountsBeforeDispatch|DeviceConfigTest.MalformedJsonIsRejectedNotThrown)$
+      TSAN_TEST_REGEX: >-
+        ^(DriverCanLifecycle.ConcurrentCloseDoesNotRetireSocketDuringSend|DriverCanLifecycle.ConcurrentCloseDoesNotRetireSocketDuringRead|DriverArxConcurrency.ConcurrentCloseAndSendCommandAreRaceFree|DriverArxConcurrency.ConcurrentCloseAndResetZeroPositionAreRaceFree|DriverArxConcurrency.ConcurrentCloseAndEnableAreRaceFree|DriverArxConcurrency.ConcurrentDmEnablesDoNotInterleaveHandshakes|DriverArxConcurrency.SendCommandDoesNotInterleaveEnableHandshake|DriverArxConcurrency.ResetDoesNotInterleaveEnableHandshake)$
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { name: asan, sanitizer: address, test_regex_env: ASAN_TEST_REGEX }
+          - { name: ubsan, sanitizer: undefined, test_regex_env: ASAN_TEST_REGEX }
+          - { name: tsan, sanitizer: thread, test_regex_env: TSAN_TEST_REGEX }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host build dependencies
+        run: |
+          sudo ./scripts/install_build_deps_ubuntu.sh
+          sudo apt-get install --no-install-recommends --yes ccache ninja-build
+
+      - name: Cache native dependencies
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: openpi-control-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_deps.sh') }}
+
+      - name: Cache compiler outputs
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-native-${{ matrix.config.name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'native/**/CMakeLists.txt', 'native/**/*.cpp', 'native/**/*.h', 'native/**/*.hpp') }}
+          restore-keys: |
+            ccache-native-${{ matrix.config.name }}-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build pinned native dependencies
+        run: |
+          if [[ ! -f .deps/pinocchio/install/lib/pkgconfig/pinocchio.pc || ! -f .deps/cppzmq/install/include/zmq.hpp ]]; then
+            ./scripts/build_deps.sh
+            rm -rf .deps/pinocchio/build
+          fi
+
+      - name: Lower ASLR entropy for TSan
+        if: matrix.config.name == 'tsan'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: |
+          cmake -S . -B "build-${{ matrix.config.name }}" -G Ninja \
+            -DOPENPI_CONTROL_BUILD_TESTING=ON \
+            -DOPENPI_CONTROL_BUILD_NATIVE=ON \
+            -DOPENPI_CONTROL_SANITIZER="${{ matrix.config.sanitizer }}" \
+            -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: |
+          cmake --build "build-${{ matrix.config.name }}" --target pi_control_tests pi_topic_zmq_tests --parallel "${BUILD_JOBS}"
+          ccache --show-stats
+
+      - name: Run targeted sanitizer tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          TEST_REGEX_ENV: ${{ matrix.config.test_regex_env }}
+        run: |
+          test_regex="${!TEST_REGEX_ENV}"
+          ctest --test-dir "build-${{ matrix.config.name }}" --output-on-failure -R "${test_regex}"
+
+  native-valgrind:
+    name: Native targeted valgrind
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes cmake g++ git libboost-dev ninja-build valgrind
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-valgrind -G Ninja \
+            -DOPENPI_CONTROL_BUILD_NATIVE=OFF \
+            -DOPENPI_CONTROL_BUILD_TESTING=ON \
+            -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build-valgrind --target pi_control_tests --parallel "${BUILD_JOBS}"
+
+      - name: Run targeted tests under valgrind
+        run: |
+          valgrind --leak-check=full --show-leak-kinds=definite,indirect \
+            --errors-for-leak-kinds=definite,indirect --track-origins=yes \
+            --error-exitcode=1 \
+            ./build-valgrind/native/pi_control/tests/pi_control_tests \
+            --gtest_filter='MathOps.*:Filter*.*:StallDetect.*:HoldChecker.*:CurrentEstimation.*:DeviceConfigTest.*:DriverCanTransport.*:DmServoStatus.*'
+
+  fuzz:
+    name: Fuzz CAN/DM status parsers
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host build dependencies
+        run: |
+          sudo ./scripts/install_build_deps_ubuntu.sh
+          sudo apt-get install --no-install-recommends --yes ccache clang ninja-build
+
+      - name: Cache native dependencies
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: openpi-control-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_deps.sh') }}
+
+      - name: Cache compiler outputs
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-fuzz-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'native/**/CMakeLists.txt', 'native/**/*.cpp', 'native/**/*.h', 'native/**/*.hpp') }}
+          restore-keys: |
+            ccache-fuzz-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build pinned native dependencies
+        run: |
+          if [[ ! -f .deps/pinocchio/install/lib/pkgconfig/pinocchio.pc || ! -f .deps/cppzmq/install/include/zmq.hpp ]]; then
+            ./scripts/build_deps.sh
+            rm -rf .deps/pinocchio/build
+          fi
+
+      - name: Build fuzz harness
+        run: |
+          cmake -S . -B build-fuzz -G Ninja \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DOPENPI_CONTROL_BUILD_FUZZERS=ON
+          cmake --build build-fuzz --target fuzz_servo_status_parsers --parallel "${BUILD_JOBS}"
+          ccache --show-stats
+
+      - name: Fuzz parser harness
+        run: |
+          ./build-fuzz/native/pi_control/fuzz_servo_status_parsers \
+            -max_total_time=120 -close_fd_mask=3 -print_final_stats=1
+
+  sil:
+    name: SIL on vcan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install host build dependencies
+        run: |
+          sudo ./scripts/install_build_deps_ubuntu.sh
+          sudo apt-get install --no-install-recommends --yes ccache ninja-build
+
+      - name: Cache native dependencies
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: openpi-control-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_deps.sh') }}
+
+      - name: Cache compiler outputs
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-sil-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'native/**/CMakeLists.txt', 'native/**/*.cpp', 'native/**/*.h', 'native/**/*.hpp') }}
+          restore-keys: |
+            ccache-sil-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build pinned native dependencies
+        run: |
+          if [[ ! -f .deps/pinocchio/install/lib/pkgconfig/pinocchio.pc || ! -f .deps/cppzmq/install/include/zmq.hpp ]]; then
+            ./scripts/build_deps.sh
+            rm -rf .deps/pinocchio/build
+          fi
+
+      - name: Build native node
+        run: |
+          cmake -S . -B build-sil -G Ninja \
+            -DOPENPI_CONTROL_BUILD_NATIVE=ON \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build-sil --target pi_control_node --parallel "${BUILD_JOBS}"
+          ccache --show-stats
+
+      - name: Install Python package with native runtime disabled
+        run: |
+          uv venv
+          uv pip install -e '.[dev]' \
+            -C cmake.define.OPENPI_CONTROL_BUILD_NATIVE=OFF
+
+      - name: Configure virtual CAN interfaces
+        run: |
+          sudo modprobe vcan || {
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends --yes "linux-modules-extra-$(uname -r)"
+            sudo modprobe vcan
+          }
+          sudo ip link add dev vcan0 type vcan
+          sudo ip link set up vcan0
+          sudo ip link add dev vcan1 type vcan
+          sudo ip link set up vcan1
+
+      - name: Run SIL tests
+        env:
+          OPENPI_CONTROL_NODE: ${{ github.workspace }}/build-sil/native/pi_control/pi_control_node
+          OPENPI_SIL_VCAN: vcan0
+          OPENPI_SIL_VCAN2: vcan1
+        run: uv run --no-sync pytest -q tests/sil

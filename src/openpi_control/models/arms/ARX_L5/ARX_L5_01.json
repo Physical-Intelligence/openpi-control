@@ -1,0 +1,128 @@
+{
+    "config_version": "1.1.0",
+    "device_model": "ARX_L5",
+    "device_type": "arm",
+    "arm_type": "arx",
+    "spring_effect" : false,
+    "gravity_compensation" : true,   
+
+    "base_rpy": [0, 0, 0],
+
+    "joints": [
+        {
+
+            "joint_id": 1,
+
+            "reference_servo_index": 0,
+            "spring_invert": false,
+            
+            "servos": [
+                {
+                    "servo_id": 1,
+
+                    "pos_min": -3.14,
+                    "pos_max": 2.618,
+                    "zero_pos": 0.0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        },
+
+        {
+            "joint_id": 2,
+
+            "reference_servo_index": 0,
+            "spring_invert": false,
+
+            "servos" : [
+                {
+                    "servo_id": 2,
+
+                    "pos_min": -0.1,
+                    "pos_max": 3.14,
+                    "zero_pos": 0.0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0.523598775598299
+                }
+            ]
+        },
+
+        {
+            "joint_id": 3,
+
+            "reference_servo_index": 0,
+            "spring_invert": false,
+
+            "servos": [
+                {
+                    "servo_id": 4,
+
+                    "pos_min": -0.1,
+                    "pos_max": 3.14,
+                    "zero_pos": 0.002,
+                    "home_pos": 0,
+                    "spring_home_pos": 0.07457828521728516
+                }
+            ]
+            
+        },
+
+        {
+            "joint_id": 4,
+
+            "reference_servo_index": 0,
+            "spring_invert": false,
+
+            "servos": [
+                {
+                    "servo_id": 5,
+
+                    "pos_min": -1.571,
+                    "pos_max": 1.571,
+                    "zero_pos": 0.0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        },
+
+        {
+            "joint_id": 5,
+
+            "reference_servo_index": 0,
+            "spring_invert": false,
+
+            "servos": [
+                {
+                    "servo_id": 6,
+
+                    "pos_min": -1.57,
+                    "pos_max": 1.57,
+                    "zero_pos": 0.0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        },
+
+        {
+            "joint_id": 6,
+
+            "reference_servo_index": 0,
+            "spring_invert": false,
+
+            "servos": [
+                {
+                    "servo_id": 7,
+
+                    "pos_min": -1.57,
+                    "pos_max": 1.57,
+                    "zero_pos": 0.0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        }
+    ]
+}

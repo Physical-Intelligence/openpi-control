@@ -1,0 +1,7 @@
+# ThreadSanitizer suppressions for the SIL run of pi_control_node.
+#
+# libzmq is not built with TSan instrumentation; its internal lock-free
+# queues produce reports TSan cannot reason about. Races in openpi_control
+# code are NOT suppressed.
+called_from_lib:libzmq.so
+race:zmq::

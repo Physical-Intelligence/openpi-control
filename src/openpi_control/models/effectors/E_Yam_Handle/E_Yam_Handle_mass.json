@@ -1,0 +1,17 @@
+{
+    "_comment": "YAM teaching handle (i2rt yam_teaching_handle.xml inertial: mass 0.258, pos (-5.10177e-05, -0.08, 0.05), quat (0.98383, 0.174699, 0, 0), diaginertia (0.000956992, 0.000799286, 0.000469547)), expressed in the Yam.urdf end_link frame. COM transformed through the handle-vs-crank last_joint_mount delta (handle mounts at (0.00358881, -0.03891574, 0.04880005) vs crank (0, -0.0398, 0.0412), shared 180-degree mount rotation about (0,-1,1)/sqrt(2)) plus the -0.01 m z offset between the i2rt last-link frame and end_link (measured from the crank inertial's baked-in counterpart). Inertia matrix about the COM is identical to the crank gripper's (same quat and diaginertia in the source models).",
+    "mass": 0.258,
+    "center_of_mass": [
+        -0.00363983,
+        -0.08760005,
+        0.03911574
+    ],
+    "inertia": {
+        "ixx": 0.000955866,
+        "iyy": 0.000761363,
+        "izz": 0.000508596,
+        "ixy": 1.47274e-05,
+        "ixz": -5.44088e-06,
+        "iyz": 0.000106418
+    }
+}

@@ -1,0 +1,112 @@
+{
+    "config_version": "1.1.0",
+    "device_model": "Yam",
+    "device_type": "arm",
+    "arm_type": "arx",
+    "spring_effect": false,
+    "gravity_compensation": true,
+    "base_rpy": [
+        0,
+        0,
+        0
+    ],
+    "joints": [
+        {
+            "joint_id": 1,
+            "reference_servo_index": 0,
+            "spring_invert": false,
+            "servos": [
+                {
+                    "servo_id": 1,
+                    "pos_min": -2.718,
+                    "pos_max": 3.23,
+                    "reverse_flag": false,
+                    "zero_pos": 0.0,
+                    "home_pos": 0.0,
+                    "spring_home_pos": 0.0
+                }
+            ]
+        },
+        {
+            "joint_id": 2,
+            "reference_servo_index": 0,
+            "spring_invert": false,
+            "servos": [
+                {
+                    "servo_id": 2,
+                    "pos_min": -0.1,
+                    "pos_max": 3.75,
+                    "reverse_flag": false,
+                    "zero_pos": 0.0,
+                    "home_pos": 0.0,
+                    "spring_home_pos": 0.0
+                }
+            ]
+        },
+        {
+            "joint_id": 3,
+            "reference_servo_index": 0,
+            "spring_invert": false,
+            "servos": [
+                {
+                    "servo_id": 3,
+                    "pos_min": -0.1,
+                    "pos_max": 3.23,
+                    "reverse_flag": false,
+                    "zero_pos": 0.0,
+                    "home_pos": 0.0,
+                    "spring_home_pos": 0.0
+                }
+            ]
+        },
+        {
+            "joint_id": 4,
+            "reference_servo_index": 0,
+            "spring_invert": false,
+            "servos": [
+                {
+                    "servo_id": 4,
+                    "pos_min": -1.671,
+                    "pos_max": 1.671,
+                    "reverse_flag": false,
+                    "zero_pos": 0.0,
+                    "home_pos": 0.0,
+                    "spring_home_pos": 0.0
+                }
+            ]
+        },
+        {
+            "joint_id": 5,
+            "reference_servo_index": 0,
+            "spring_invert": false,
+            "servos": [
+                {
+                    "servo_id": 5,
+                    "pos_min": -1.671,
+                    "pos_max": 1.671,
+                    "reverse_flag": false,
+                    "zero_pos": 0.0,
+                    "home_pos": 0.0,
+                    "spring_home_pos": 0.0
+                }
+            ]
+        },
+        {
+            "joint_id": 6,
+            "reference_servo_index": 0,
+            "spring_invert": false,
+            "servos": [
+                {
+                    "servo_id": 6,
+                    "pos_min": -2.194,
+                    "pos_max": 2.194,
+                    "reverse_flag": false,
+                    "zero_pos": 0.0,
+                    "home_pos": 0.0,
+                    "spring_home_pos": 0.0
+                }
+            ]
+        }
+    ],
+    "_limits_note": "pos_min/pos_max are the URDF joint limits +/-0.1 rad calibration margin. The old uniform +/-3.2 let direct commands drive the wrist joints ~1.6 rad past their mechanical stops at up to torq_max before the torque checker reacted, and truncated joint2's usable upper range (URDF 3.65)."
+}

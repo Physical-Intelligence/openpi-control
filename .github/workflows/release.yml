@@ -1,0 +1,270 @@
+name: Release wheels
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to create or update, e.g. v0.1.0"
+        required: true
+        type: string
+      draft:
+        description: "Create a draft release when the release does not already exist"
+        required: true
+        default: true
+        type: boolean
+      prerelease:
+        description: "Mark the release as a prerelease when the release does not already exist"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_type == 'tag' && github.ref_name || inputs.tag_name }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  BUILD_JOBS: "2"
+  UV_LINK_MODE: copy
+
+jobs:
+  build:
+    name: Build wheel (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            file_arch_pattern: "x86-64|x86_64"
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+            file_arch_pattern: "aarch64|ARM aarch64"
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install host build dependencies
+        run: sudo ./scripts/install_build_deps_ubuntu.sh
+
+      - name: Cache native dependencies
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: openpi-control-release-deps-${{ matrix.arch }}-${{ hashFiles('scripts/build_deps.sh') }}
+
+      - name: Cache compiler outputs
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-release-${{ matrix.arch }}-${{ hashFiles('CMakeLists.txt', 'native/**/CMakeLists.txt', 'native/**/*.cpp', 'native/**/*.h', 'native/**/*.hpp') }}
+          restore-keys: |
+            ccache-release-${{ matrix.arch }}-
+
+      - name: Build pinned native dependencies
+        run: |
+          if [[ ! -f .deps/pinocchio/install/lib/pkgconfig/pinocchio.pc || ! -f .deps/cppzmq/install/include/zmq.hpp ]]; then
+            ./scripts/build_deps.sh
+            rm -rf .deps/pinocchio/build
+          fi
+
+      - name: Build wheel
+        run: |
+          uv build --wheel
+          ccache --show-stats
+
+      - name: Install wheel into a clean venv
+        run: |
+          wheel_count="$(find dist -maxdepth 1 -name '*.whl' | wc -l)"
+          if [[ "${wheel_count}" -ne 1 ]]; then
+            find dist -maxdepth 1 -name '*.whl' -print
+            echo "Expected exactly one wheel, found ${wheel_count}" >&2
+            exit 1
+          fi
+          wheel_path="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          uv venv "${RUNNER_TEMP}/wheel-venv"
+          uv pip install --python "${RUNNER_TEMP}/wheel-venv/bin/python" "${wheel_path}"
+
+      - name: Smoke-test packaged native node
+        env:
+          FILE_ARCH_PATTERN: ${{ matrix.file_arch_pattern }}
+        run: |
+          node_path="$("${RUNNER_TEMP}/wheel-venv/bin/python" - <<'PY'
+          from pathlib import Path
+
+          import openpi_control
+          from openpi_control.native import native_executable
+
+          node = Path(native_executable()).resolve()
+          assert node.name == "pi_control_node", node
+          assert node.exists(), node
+          assert node.is_file(), node
+          print(node)
+          PY
+          )"
+
+          echo "Packaged node: ${node_path}"
+          file "${node_path}" | tee node-file.txt
+          if ! grep -Eiq "${FILE_ARCH_PATTERN}" node-file.txt; then
+            echo "pi_control_node does not look like the expected ${{ matrix.arch }} binary" >&2
+            exit 1
+          fi
+
+          ldd "${node_path}" | tee node-ldd.txt
+          if grep -q "not found" node-ldd.txt; then
+            echo "pi_control_node has unresolved shared-library dependencies" >&2
+            exit 1
+          fi
+
+          libs_dir="$(cd "$(dirname "${node_path}")/../libs" && pwd)"
+          LIBS_DIR="${libs_dir}" python - <<'PY'
+          from __future__ import annotations
+
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          libs_dir = Path(os.environ["LIBS_DIR"]).resolve()
+          ldd_lines = Path("node-ldd.txt").read_text().splitlines()
+          required = ("libpinocchio", "libzmq")
+          missing: list[str] = []
+
+          for library in required:
+              matches = [line for line in ldd_lines if library in line]
+              if not matches:
+                  missing.append(f"{library}: absent from ldd output")
+                  continue
+
+              resolved_paths: list[Path] = []
+              for line in matches:
+                  match = re.search(r"=>\s+(\S+)\s+\(", line)
+                  if match:
+                      resolved_paths.append(Path(match.group(1)).resolve())
+
+              if not any(path.is_relative_to(libs_dir) for path in resolved_paths):
+                  missing.append(
+                      f"{library}: not resolved from packaged libs directory {libs_dir}"
+                  )
+
+          if missing:
+              print("\n".join(missing), file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openpi-control-wheel-${{ matrix.arch }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    runs-on: ubuntu-22.04
+    needs: build
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release settings
+        id: release
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            release_tag="${{ inputs.tag_name }}"
+            draft="${{ inputs.draft }}"
+            prerelease="${{ inputs.prerelease }}"
+          else
+            release_tag="${GITHUB_REF_NAME}"
+            draft="false"
+            prerelease="false"
+          fi
+
+          if [[ ! "${release_tag}" =~ ^v[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
+            echo "Release tag must start with 'v' and contain only letters, digits, dots, underscores, and dashes: ${release_tag}" >&2
+            exit 1
+          fi
+
+          echo "tag=${release_tag}" >> "${GITHUB_OUTPUT}"
+          echo "draft=${draft}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openpi-control-wheel-*
+          path: release-dist
+          merge-multiple: true
+
+      - name: Verify release assets
+        run: |
+          find release-dist -maxdepth 1 -type f -name '*.whl' -print | sort
+          wheel_count="$(find release-dist -maxdepth 1 -type f -name '*.whl' | wc -l)"
+          if [[ "${wheel_count}" -ne 2 ]]; then
+            echo "Expected exactly two wheel assets, found ${wheel_count}" >&2
+            exit 1
+          fi
+          if ! find release-dist -maxdepth 1 -type f -name '*linux_x86_64.whl' | grep -q .; then
+            echo "Missing x86_64 wheel" >&2
+            exit 1
+          fi
+          if ! find release-dist -maxdepth 1 -type f -name '*linux_aarch64.whl' | grep -q .; then
+            echo "Missing aarch64 wheel" >&2
+            exit 1
+          fi
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          DRAFT_RELEASE: ${{ steps.release.outputs.draft }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; preserving its draft/published state."
+            gh release edit "${RELEASE_TAG}" \
+              --title "${RELEASE_TAG}" \
+              --prerelease="${PRERELEASE}"
+          else
+            create_flags=(
+              --title "${RELEASE_TAG}"
+              --target "${GITHUB_SHA}"
+              --generate-notes
+            )
+            if [[ "${DRAFT_RELEASE}" == "true" ]]; then
+              create_flags+=(--draft)
+            fi
+            if [[ "${PRERELEASE}" == "true" ]]; then
+              create_flags+=(--prerelease)
+            fi
+            gh release create "${RELEASE_TAG}" "${create_flags[@]}"
+          fi
+
+          gh release upload "${RELEASE_TAG}" release-dist/*.whl --clobber
