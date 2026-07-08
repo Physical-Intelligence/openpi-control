@@ -16,7 +16,7 @@ SUPPORTED_MODELS = (
     "ARX_X5",
     "Yam",
 )
-SUPPORTED_EFFECTORS = ("E_ARX", "E_Yam", "E_Yam_Handle")
+SUPPORTED_EFFECTORS = ("E_ARX", "E_Yam", "E_Yam_Handle", "E_Yam_Handle_compat")
 
 
 @dataclass(frozen=True, slots=True)

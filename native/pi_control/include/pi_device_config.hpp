@@ -137,6 +137,7 @@ class DeviceConfig {
     const std::string fn_servo_home_pos                   = "home_pos";           ///< Field name for home position (relative radian).
     const std::string fn_servo_response_delay             = "response_delay";     ///< Field name for response_delay (sec).
     const std::string fn_servo_response_can_id             = "response_can_id";    ///< Field name for the CAN id a passive encoder answers on (optional; default encoder id + 1, the i2rt ``plus_one`` firmware receive mode).
+    const std::string fn_passive_encoder_firmware_compat   = "passive_encoder_firmware_compat"; ///< Field name (bool, passive encoders only; optional, default false). When true the driver tolerates multiple teaching-handle firmware revisions during EEPROM/frequency setup (both the <=2.2.x READINGS and >=2.3.x GET_EEPROM reply formats, plus the legacy <=2.2.12 8-bit frequency layout). Isolated to the YAM handle: ARX effectors have no passive encoder and never read this.
     const std::string fn_servo_reverse                    = "reverse_flag";       ///< Field name for direction reverse flag (bool).
 
     const std::string fn_joystick_deadband              = "joystick_deadband";              ///< Field name for joystick deadband (raw byte half-width applied symmetrically around the X/Y channel center).

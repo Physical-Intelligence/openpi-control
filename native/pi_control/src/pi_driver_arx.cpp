@@ -92,29 +92,32 @@ ReturnCode DriverArx::open(int baud_rate) {
 }
 
 ReturnCode DriverArx::configure_passive_encoders() {
-    std::set<int> request_can_ids;
+    // request_can_id -> firmware_compat. A single encoder may have several
+    // routes; OR their flags so any route opting into compat mode enables it.
+    std::map<int, bool> request_firmware_compat;
     {
         std::lock_guard<std::mutex> lock(received_servo_data_mutex_);
         for (const auto& [response_can_id, route] : passive_encoder_routes_) {
             (void)response_can_id;
-            request_can_ids.insert(route.encoder_id_);
+            request_firmware_compat[route.encoder_id_] =
+                request_firmware_compat[route.encoder_id_] || route.firmware_compat_;
         }
     }
 
-    for (int request_can_id : request_can_ids) {
-        ReturnCode return_code = configure_passive_encoder(request_can_id);
+    for (const auto& [request_can_id, firmware_compat] : request_firmware_compat) {
+        ReturnCode return_code = configure_passive_encoder(request_can_id, firmware_compat);
         if (return_code != ReturnCode::SUCCESS) {
             return return_code;
         }
     }
 
-    if (!request_can_ids.empty()) {
+    if (!request_firmware_compat.empty()) {
         drain_startup_frames();
     }
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DriverArx::configure_passive_encoder(int request_can_id) {
+ReturnCode DriverArx::configure_passive_encoder(int request_can_id, bool firmware_compat) {
     const uint8_t version_request[] = {kPassiveEncoderAllDevices, kPassiveEncoderReqVersion};
     ReturnCode return_code =
         send_passive_encoder_request(request_can_id, version_request, sizeof(version_request));
@@ -144,13 +147,15 @@ ReturnCode DriverArx::configure_passive_encoder(int request_can_id) {
     int adc_frequency = -1;
     int report_frequency = -1;
     return_code = read_passive_encoder_frequency(request_can_id, device, kPassiveEncoderAdcFrequencyHighOffset,
-                                                 kPassiveEncoderAdcFrequencyLowOffset, &adc_frequency);
+                                                 kPassiveEncoderAdcFrequencyLowOffset, &adc_frequency,
+                                                 firmware_compat);
     if (return_code != ReturnCode::SUCCESS) {
         PI_ERROR("Passive encoder CAN id 0x%03X device %u: failed to read ADC frequency", request_can_id, device);
         return return_code;
     }
     return_code = read_passive_encoder_frequency(request_can_id, device, kPassiveEncoderReportFrequencyHighOffset,
-                                                 kPassiveEncoderReportFrequencyLowOffset, &report_frequency);
+                                                 kPassiveEncoderReportFrequencyLowOffset, &report_frequency,
+                                                 firmware_compat);
     if (return_code != ReturnCode::SUCCESS) {
         PI_ERROR("Passive encoder CAN id 0x%03X device %u: failed to read report frequency", request_can_id,
                  device);
@@ -168,7 +173,8 @@ ReturnCode DriverArx::configure_passive_encoder(int request_can_id) {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         return_code = read_passive_encoder_frequency(request_can_id, device, kPassiveEncoderAdcFrequencyHighOffset,
-                                                     kPassiveEncoderAdcFrequencyLowOffset, &adc_frequency);
+                                                     kPassiveEncoderAdcFrequencyLowOffset, &adc_frequency,
+                                                     firmware_compat);
         if (return_code != ReturnCode::SUCCESS || adc_frequency != kPassiveEncoderRequiredAdcFrequency) {
             PI_ERROR("Passive encoder CAN id 0x%03X device %u: ADC frequency verification failed (read %d, "
                      "expected %d)",
@@ -190,7 +196,8 @@ ReturnCode DriverArx::configure_passive_encoder(int request_can_id) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         return_code = read_passive_encoder_frequency(request_can_id, device,
                                                      kPassiveEncoderReportFrequencyHighOffset,
-                                                     kPassiveEncoderReportFrequencyLowOffset, &report_frequency);
+                                                     kPassiveEncoderReportFrequencyLowOffset, &report_frequency,
+                                                     firmware_compat);
         if (return_code != ReturnCode::SUCCESS || report_frequency != kPassiveEncoderRequiredReportFrequency) {
             PI_ERROR("Passive encoder CAN id 0x%03X device %u: report frequency verification failed (read %d, "
                      "expected %d)",
@@ -248,7 +255,7 @@ ReturnCode DriverArx::wait_for_passive_encoder_reply(int request_can_id, int exp
 }
 
 ReturnCode DriverArx::read_passive_encoder_eeprom(int request_can_id, uint8_t device, uint8_t offset,
-                                                  uint8_t* p_value) {
+                                                  uint8_t* p_value, bool firmware_compat) {
     if (p_value == nullptr) {
         return ReturnCode::INVALID_PARAM;
     }
@@ -259,32 +266,76 @@ ReturnCode DriverArx::read_passive_encoder_eeprom(int request_can_id, uint8_t de
         return return_code;
     }
 
-    can_frame_t reply{};
-    return_code = wait_for_passive_encoder_reply(
-        request_can_id, device, kPassiveEncoderReqReadings | kPassiveEncoderResponseFlag, 5,
-        kPassiveEncoderEepromTimeoutMs, &reply);
-    if (return_code != ReturnCode::SUCCESS) {
-        return return_code;
+    if (!firmware_compat) {
+        // Original behavior: the encoder replies to GET_EEPROM in the READINGS
+        // response format (command 0x86, 5 bytes, big-endian int16 value).
+        can_frame_t reply{};
+        return_code = wait_for_passive_encoder_reply(
+            request_can_id, device, kPassiveEncoderReqReadings | kPassiveEncoderResponseFlag, 5,
+            kPassiveEncoderEepromTimeoutMs, &reply);
+        if (return_code != ReturnCode::SUCCESS) {
+            return return_code;
+        }
+        const int16_t value = static_cast<int16_t>((reply.data[2] << 8) | reply.data[3]);
+        *p_value = static_cast<uint8_t>(value & 0xFF);
+        return ReturnCode::SUCCESS;
     }
 
-    const int16_t value = static_cast<int16_t>((reply.data[2] << 8) | reply.data[3]);
-    *p_value = static_cast<uint8_t>(value & 0xFF);
-    return ReturnCode::SUCCESS;
+    // Compat mode: firmware <=2.2.x replies to GET_EEPROM in the READINGS
+    // response format (command 0x86, 5 bytes, big-endian int16 value); firmware
+    // >=2.3.x uses a dedicated GET_EEPROM response (command 0x87, 3 bytes,
+    // single value byte). Accept both.
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(kPassiveEncoderEepromTimeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        can_frame_t frame{};
+        return_code = read_frame(&frame, sizeof(frame));
+        if (return_code == ReturnCode::NO_RESPONSE) {
+            continue;
+        }
+        if (return_code != ReturnCode::SUCCESS) {
+            return return_code;
+        }
+        if (static_cast<int>(frame.can_id & 0x7FF) != request_can_id || frame.data[0] != device) {
+            continue;
+        }
+        if (frame.can_dlc == 5 &&
+            frame.data[1] == (kPassiveEncoderReqReadings | kPassiveEncoderResponseFlag)) {
+            const int16_t value = static_cast<int16_t>((frame.data[2] << 8) | frame.data[3]);
+            *p_value = static_cast<uint8_t>(value & 0xFF);
+            return ReturnCode::SUCCESS;
+        }
+        if (frame.can_dlc == 3 &&
+            frame.data[1] == (kPassiveEncoderReqGetEeprom | kPassiveEncoderResponseFlag)) {
+            *p_value = frame.data[2];
+            return ReturnCode::SUCCESS;
+        }
+    }
+    return ReturnCode::NO_RESPONSE;
 }
 
 ReturnCode DriverArx::read_passive_encoder_frequency(int request_can_id, uint8_t device, uint8_t high_offset,
-                                                     uint8_t low_offset, int* p_frequency) {
+                                                     uint8_t low_offset, int* p_frequency, bool firmware_compat) {
     if (p_frequency == nullptr) {
         return ReturnCode::INVALID_PARAM;
     }
 
     uint8_t high = 0;
     uint8_t low = 0;
-    ReturnCode return_code = read_passive_encoder_eeprom(request_can_id, device, high_offset, &high);
-    if (return_code != ReturnCode::SUCCESS) {
+    ReturnCode return_code = read_passive_encoder_eeprom(request_can_id, device, high_offset, &high, firmware_compat);
+    if (firmware_compat && return_code == ReturnCode::NO_RESPONSE) {
+        // Firmware <=2.2.12 exposes a 27-byte EEPROM (offsets 0-26): the 16-bit
+        // frequency high bytes at offsets 27/28 do not exist and reads for them
+        // get no reply. Treat a silent high byte like the 0xFF "uninitialized"
+        // marker and fall back to the 8-bit value in the low byte.
+        PI_WARN("Passive encoder CAN id 0x%03X device %u: EEPROM offset %u not implemented "
+                "(legacy 8-bit layout); using 8-bit frequency from offset %u",
+                request_can_id, device, high_offset, low_offset);
+        high = 0xFF;
+    } else if (return_code != ReturnCode::SUCCESS) {
         return return_code;
     }
-    return_code = read_passive_encoder_eeprom(request_can_id, device, low_offset, &low);
+    return_code = read_passive_encoder_eeprom(request_can_id, device, low_offset, &low, firmware_compat);
     if (return_code != ReturnCode::SUCCESS) {
         return return_code;
     }
@@ -626,7 +677,8 @@ ReturnCode DriverArx::send_disable_once(int id, int type) {
     return return_code;
 }
 
-ReturnCode DriverArx::register_passive_encoder(int response_can_id, int encoder_id, int data_index) {
+ReturnCode DriverArx::register_passive_encoder(int response_can_id, int encoder_id, int data_index,
+                                               bool firmware_compat) {
     if (data_index < 0 || data_index >= MAX_SERVO_INFO_BUF_SIZE) {
         PI_ERROR("Passive encoder id=%d: data_index %d out of range [0, %d)", encoder_id, data_index,
                  MAX_SERVO_INFO_BUF_SIZE);
@@ -646,10 +698,10 @@ ReturnCode DriverArx::register_passive_encoder(int response_can_id, int encoder_
     }
 
     std::lock_guard<std::mutex> lock(received_servo_data_mutex_);
-    passive_encoder_routes_[response_can_id] = PassiveEncoderRoute{encoder_id, data_index};
+    passive_encoder_routes_[response_can_id] = PassiveEncoderRoute{encoder_id, data_index, firmware_compat};
     PI_INFO("Driver", InfoLevel::HELPFUL_1,
-            "Registered passive encoder route: encoder_id=%d response_can_id=0x%02X data_index=%d",
-            encoder_id, response_can_id, data_index);
+            "Registered passive encoder route: encoder_id=%d response_can_id=0x%02X data_index=%d firmware_compat=%d",
+            encoder_id, response_can_id, data_index, firmware_compat ? 1 : 0);
     return ReturnCode::SUCCESS;
 }
 
