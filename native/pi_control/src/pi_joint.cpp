@@ -210,6 +210,35 @@ ReturnCode Joint::init_config_individual(const json& joint_config, const DeviceC
         return ReturnCode::INVALID_PARAM;
     }
 
+    // Optional per-instance motion-limit overrides. The individual config
+    // (effector_instance_config) may raise/lower the joint's velocity and
+    // acceleration limits without a separate effector model -- e.g. openpi-beta
+    // sets a faster gripper close speed in its per-arm calibration JSON. Absent
+    // fields keep the model-config value (init_config_model runs first).
+    if (p_config->get_field_value(joint_config, p_config->fn_joint_vel_max, vel_max_) == ReturnCode::SUCCESS) {
+        PI_INFO("Joint", InfoLevel::HELPFUL_1, "Joint %d: vel_max override=%.3f", id_, vel_max_);
+    }
+    if (p_config->get_field_value(joint_config, p_config->fn_joint_accel_max, accel_max_) == ReturnCode::SUCCESS) {
+        PI_INFO("Joint", InfoLevel::HELPFUL_1, "Joint %d: accel_max override=%.3f", id_, accel_max_);
+    }
+    if (p_config->get_field_value(joint_config, p_config->fn_joint_follow_vel_max, follow_vel_max_) ==
+        ReturnCode::SUCCESS) {
+        follow_vel_max_configured_ = true;
+        PI_INFO("Joint", InfoLevel::HELPFUL_1, "Joint %d: follow_vel_max override=%.3f", id_, follow_vel_max_);
+    } else if (!follow_vel_max_configured_) {
+        // follow_vel_max was never set explicitly; keep it tracking the
+        // (possibly overridden) vel_max.
+        follow_vel_max_ = vel_max_;
+    }
+
+    if (!std::isfinite(vel_max_) || vel_max_ <= 0.0f || !std::isfinite(accel_max_) || accel_max_ <= 0.0f ||
+        !std::isfinite(follow_vel_max_) || follow_vel_max_ <= 0.0f) {
+        PI_ERROR("Joint %d: vel_max/accel_max/follow_vel_max must be finite and positive after individual "
+                 "overrides (vel_max=%.3f accel_max=%.3f follow_vel_max=%.3f)",
+                 id_, vel_max_, accel_max_, follow_vel_max_);
+        return ReturnCode::INVALID_PARAM;
+    }
+
     return ReturnCode::SUCCESS;
 }
 
