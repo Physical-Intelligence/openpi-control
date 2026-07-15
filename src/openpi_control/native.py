@@ -367,6 +367,14 @@ class NativeArmBackend(ArmBackend):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            # Run the native node in its own session so a Ctrl+C in the parent's
+            # controlling terminal is not delivered to it as SIGINT. The node
+            # installs a SIGINT handler that stops its control loop (dropping the
+            # arms); when it is supervised here, teardown is driven explicitly via
+            # SHUTDOWN / MOVE_TO_READY_AND_SHUTDOWN commands and terminate() by PID,
+            # so it should outlive the terminal interrupt and let the supervisor
+            # decide how to stop. Running the binary standalone still gets Ctrl+C.
+            start_new_session=True,
         )
         self._log_reader = threading.Thread(target=self._drain_process_log, daemon=True)
         self._log_reader.start()

@@ -217,6 +217,30 @@ def test_native_backend_forwards_leader_gravity_compensation_default(
     assert ("--leader_gravity_compensation" in captured_args) is expected_present
 
 
+def test_native_backend_starts_node_in_new_session(monkeypatch) -> None:
+    captured_kwargs: dict = {}
+    backend = NativeArmBackend()
+    config = ArmConfig("native-test", "Yam", SocketCanConnection("lo"), control_frequency_hz=100)
+
+    def capture_spawn(args, **kwargs):
+        captured_kwargs.update(kwargs)
+        raise RuntimeError("captured native arguments")
+
+    monkeypatch.setattr("openpi_control.native.platform.system", lambda: "Linux")
+    monkeypatch.setattr("openpi_control.native.validate_connection", lambda connection: None)
+    monkeypatch.setattr("openpi_control.native.native_executable", lambda: Path(sys.executable))
+    monkeypatch.setattr("openpi_control.native.subprocess.Popen", capture_spawn)
+
+    try:
+        with pytest.raises(RuntimeError, match="captured native arguments"):
+            backend.connect(config, ArmRole.FOLLOWER, topics_for("new-session", "native-test"))
+    finally:
+        backend.close()
+
+    # Detach from the controlling terminal so a Ctrl+C there is not delivered to the node.
+    assert captured_kwargs.get("start_new_session") is True
+
+
 def test_publisher_closes_socket_when_bind_candidates_are_exhausted():
     topic = f"t-publisher-bind-failure-{time.time_ns()}"
     blocker_context = zmq.Context()
