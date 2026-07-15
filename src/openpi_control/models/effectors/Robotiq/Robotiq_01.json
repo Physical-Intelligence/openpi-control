@@ -1,0 +1,8 @@
+{
+  "config_version": "1.1.0",
+  "device_model": "Robotiq",
+  "device_type": "effector",
+  "effector_type": "robotiq",
+  "min_position_raw": 3,
+  "max_position_raw": 230
+}

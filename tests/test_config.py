@@ -7,7 +7,9 @@ from openpi_control import (
     ArmConfig,
     ConfigurationError,
     EthernetConnection,
+    FrankaConnection,
     InputLayout,
+    RobotiqConnection,
     SafetyLimits,
     SerialConnection,
     SocketCanConnection,
@@ -19,18 +21,23 @@ from openpi_control.protocol import topics_for
 
 @pytest.mark.parametrize("model", SUPPORTED_MODELS)
 def test_physical_model_catalog_is_complete(model: str) -> None:
-    config = ArmConfig("arm", model, SocketCanConnection("test"))
+    connection = (
+        FrankaConnection("172.16.0.2") if model == "Franka" else SocketCanConnection("test")
+    )
+    config = ArmConfig("arm", model, connection)
     assets = config.resolve_assets()
     assert assets.model_config.is_file()
     assert assets.instance_config.is_file()
-    assert assets.urdf.is_file()
-    # SO101 (SO-ARM100/101) is the catalog's only 5-DOF arm; everything else is 6-DOF.
-    assert len(config.joint_names()) == (5 if model == "SO101" else 6)
-    # The native node is always launched with --algo_type Pinocchio, which overrides
-    # any config value except "Algo" (config keeps priority for "Algo"). Arm configs
-    # must therefore never declare "Algo": robot-test 1.1.1 configs say "KDL"
-    # (overridden to Pinocchio), openpi-tuned configs say "Pinocchio" directly.
-    assert json.loads(assets.model_config.read_text())["algo_type"] in ("Pinocchio", "KDL")
+    if model == "Franka":
+        assert assets.urdf is None
+        assert len(config.joint_names()) == 7
+        assert json.loads(assets.model_config.read_text())["algo_type"] == "None"
+    else:
+        assert assets.urdf is not None and assets.urdf.is_file()
+        # SO101 (SO-ARM100/101) is the catalog's only 5-DOF arm.
+        assert len(config.joint_names()) == (5 if model == "SO101" else 6)
+        # Native Pinocchio overrides legacy KDL catalog declarations.
+        assert json.loads(assets.model_config.read_text())["algo_type"] in ("Pinocchio", "KDL")
 
 
 def test_connection_for_interface_dispatches_on_the_interface_form() -> None:
@@ -58,6 +65,26 @@ def test_so101_catalog_declares_serial_port_type_and_baudrate() -> None:
     catalog = json.loads(config.resolve_assets().model_config.read_text())["catalog"]
     assert catalog["port_type"] == "Serial"
     assert config.catalog_baudrate() == 1000000
+
+
+def test_franka_and_robotiq_require_typed_connections() -> None:
+    with pytest.raises(ConfigurationError, match="FrankaConnection"):
+        ArmConfig("arm", "Franka", SocketCanConnection("test"))
+    with pytest.raises(ConfigurationError, match="RobotiqConnection"):
+        ArmConfig("arm", "Franka", FrankaConnection("172.16.0.2"), effector_model="Robotiq")
+
+    config = ArmConfig(
+        "arm",
+        "Franka",
+        FrankaConnection("172.16.0.2"),
+        effector_model="Robotiq",
+        effector_connection=RobotiqConnection("/dev/ttyUSB0"),
+    )
+    assert config.joint_names() == tuple(f"panda_joint{i}" for i in range(1, 8))
+    assert config.resolve_assets().urdf is None
+    assert config.effector_connection.min_position_raw == 3
+    assert config.effector_connection.max_position_raw == 230
+    assert FrankaConnection("172.16.0.2", read_only=True).read_only
 
 
 def test_logical_identity_is_separate_from_instance_config(tmp_path: Path) -> None:

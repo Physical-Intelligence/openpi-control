@@ -99,6 +99,9 @@ class EffectorState:
     temperature_c: float = 0.0
     current_a: float = 0.0
     frame_age_ms: float = -1.0
+    connected: bool = True
+    activated: bool = True
+    faulted: bool = False
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.position <= 1.0:
@@ -164,6 +167,7 @@ class ArmState:
     wall_timestamp: float
     sequence: int
     mode: ArmMode
+    diagnostics: ArmDiagnostics | None = None
 
     @property
     def age_s(self) -> float:
@@ -173,13 +177,31 @@ class ArmState:
         return self.age_s <= max_age_s
 
 
+def _validate_effector_command(
+    effector: float | None, effector_speed: float | None, effector_force: float | None
+) -> None:
+    for name, value in (
+        ("effector", effector),
+        ("effector_speed", effector_speed),
+        ("effector_force", effector_force),
+    ):
+        if value is not None and not 0.0 <= value <= 1.0:
+            raise ConfigurationError(f"{name} must be normalized to [0, 1]")
+
+
 @dataclass(frozen=True, slots=True)
 class PositionCommand:
-    """A direct target: joint positions in rad and optional normalized effector."""
+    """A direct target with optional normalized gripper controls.
+
+    Effector position uses 0 = closed and 1 = open. Speed and force are in
+    [0, 1], where 1 requests the configured maximum.
+    """
 
     position_rad: FloatArray
     effector: float | None = None
     created_monotonic: float = field(default_factory=time.monotonic)
+    effector_speed: float | None = None
+    effector_force: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -187,8 +209,61 @@ class PositionCommand:
         )
         if self.position_rad.size == 0:
             raise ConfigurationError("position command must contain at least one joint")
-        if self.effector is not None and not 0.0 <= self.effector <= 1.0:
-            raise ConfigurationError("effector command must be normalized to [0, 1]")
+        _validate_effector_command(self.effector, self.effector_speed, self.effector_force)
+
+
+@dataclass(frozen=True, slots=True)
+class VelocityCommand:
+    """A direct joint-velocity target with optional normalized gripper controls.
+
+    Joint velocity is expressed in rad/s. The Franka controller integrates the
+    target at its native 1 kHz rate using the Polymetis JointVelocityControl
+    law. Effector fields have the same meaning as :class:`PositionCommand`.
+    """
+
+    velocity_rad_s: FloatArray
+    effector: float | None = None
+    created_monotonic: float = field(default_factory=time.monotonic)
+    effector_speed: float | None = None
+    effector_force: float | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "velocity_rad_s", readonly_array(self.velocity_rad_s, name="velocity_rad_s")
+        )
+        if self.velocity_rad_s.size == 0:
+            raise ConfigurationError("velocity command must contain at least one joint")
+        _validate_effector_command(self.effector, self.effector_speed, self.effector_force)
+
+
+@dataclass(frozen=True, slots=True)
+class ArmDiagnostics:
+    """Optional high-rate hardware diagnostics kept separate from joint state."""
+
+    external_joint_torque_nm: FloatArray
+    cartesian_wrench: FloatArray
+    commanded_position_rad: FloatArray
+    joint_contact: tuple[bool, ...]
+    joint_collision: tuple[bool, ...]
+    robot_mode: int
+    control_command_success_rate: float
+    hardware_timestamp_s: float
+    effector_target: float | None = None
+    hardware_faulted: bool = False
+
+    def __post_init__(self) -> None:
+        for name in ("external_joint_torque_nm", "cartesian_wrench", "commanded_position_rad"):
+            object.__setattr__(self, name, readonly_array(getattr(self, name), name=name))
+        if self.external_joint_torque_nm.size != 7 or self.commanded_position_rad.size != 7:
+            raise ConfigurationError("Franka joint diagnostics must contain seven values")
+        if self.cartesian_wrench.size != 6:
+            raise ConfigurationError("Cartesian wrench must contain six values")
+        if len(self.joint_contact) != 7 or len(self.joint_collision) != 7:
+            raise ConfigurationError("Franka contact diagnostics must contain seven values")
+        if not 0.0 <= self.control_command_success_rate <= 1.0:
+            raise ConfigurationError("control command success rate must be in [0, 1]")
+        if self.effector_target is not None and not 0.0 <= self.effector_target <= 1.0:
+            raise ConfigurationError("effector target must be normalized to [0, 1]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +307,10 @@ class ArmCapabilities:
     button_names: tuple[str, ...] = ()
     axis_names: tuple[str, ...] = ()
     max_bilateral_gain: float = 0.3
+    supports_effector_activation: bool = False
+    supports_recovery: bool = False
+    supports_effector_force: bool = False
+    supports_velocity_commands: bool = False
 
     @property
     def dof(self) -> int:

@@ -10,6 +10,7 @@ from openpi_control import (
     InputState,
     JointState,
     PositionCommand,
+    VelocityCommand,
 )
 
 
@@ -57,6 +58,16 @@ def test_command_and_effector_validation() -> None:
         PositionCommand([float("nan")])
     with pytest.raises(ConfigurationError):
         EffectorState(1.01)
+    command = PositionCommand(
+        [0.0] * 7, effector=0.0, effector_speed=0.5, effector_force=1.0
+    )
+    assert command.effector == 0.0
+    with pytest.raises(ConfigurationError):
+        PositionCommand([0.0] * 7, effector_force=1.1)
+    velocity = VelocityCommand([0.1] * 7, effector=1.0)
+    assert velocity.velocity_rad_s.tolist() == [0.1] * 7
+    with pytest.raises(ConfigurationError):
+        VelocityCommand([float("nan")] * 7)
 
 
 def test_input_state_named_access_and_validation() -> None:

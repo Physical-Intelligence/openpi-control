@@ -1,0 +1,7 @@
+{
+  "config_version": "1.1.0",
+  "device_model": "Franka",
+  "device_type": "arm",
+  "arm_type": "franka",
+  "home_pos": [0.0, -0.6283185307, 0.0, -2.5132741229, 0.0, 1.8849555922, 0.0]
+}

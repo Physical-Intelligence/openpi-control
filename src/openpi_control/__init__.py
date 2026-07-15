@@ -4,8 +4,12 @@ from .arms import FollowerArm, LeaderArm
 from .config import (
     ArmConfig,
     EthernetConnection,
+    FrankaConnection,
+    FrankaRealtimeConfig,
+    FrankaSafetyLimits,
     InputLayout,
     ResolvedArmAssets,
+    RobotiqConnection,
     SafetyLimits,
     SerialConnection,
     SocketCanConnection,
@@ -29,6 +33,7 @@ from .session import ArmSession
 from .teleop import TeleopPair
 from .types import (
     ArmCapabilities,
+    ArmDiagnostics,
     ArmMode,
     ArmRole,
     ArmState,
@@ -37,12 +42,14 @@ from .types import (
     JointServoReport,
     JointState,
     PositionCommand,
+    VelocityCommand,
 )
 
 __all__ = [
     "PiControlError",
     "AlignmentError",
     "ArmCapabilities",
+    "ArmDiagnostics",
     "ArmConfig",
     "ArmMode",
     "ArmRole",
@@ -62,15 +69,20 @@ __all__ = [
     "LeaderArm",
     "NativeProcessError",
     "PositionCommand",
+    "VelocityCommand",
     "ProtocolError",
     "RoleError",
     "SafetyLimits",
     "ResolvedArmAssets",
     "SerialConnection",
+    "RobotiqConnection",
     "SocketCanConnection",
     "StaleStateError",
     "StateTimeoutError",
     "TeleopPair",
     "connection_for_interface",
     "resolve_model_assets",
+    "FrankaConnection",
+    "FrankaRealtimeConfig",
+    "FrankaSafetyLimits",
 ]

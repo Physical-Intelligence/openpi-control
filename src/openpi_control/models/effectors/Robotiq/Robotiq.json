@@ -1,0 +1,15 @@
+{
+  "config_version": "1.1.0",
+  "device_model": "Robotiq",
+  "device_type": "effector",
+  "effector_type": "robotiq",
+  "driver_type": "ModbusRTU",
+  "catalog": {
+    "display_label": "Robotiq 2F-85/2F-140",
+    "order": 20,
+    "need_repeated_command": true
+  },
+  "joints": [
+    {"joint_id": 8, "joint_name": "robotiq_gripper", "normalized_pos_min": 0.0, "normalized_pos_max": 1.0}
+  ]
+}

@@ -7,6 +7,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
 
@@ -18,6 +19,7 @@ SUPPORTED_MODELS = (
     "ARX_ENC",
     "ARX_L5",
     "ARX_X5",
+    "Franka",
     "SO101",
     "Trossen_wai_ctrl",
     "Yam",
@@ -30,6 +32,7 @@ SUPPORTED_EFFECTORS = (
     "E_Yam",
     "E_Yam_Handle",
     "E_Yam_Handle_compat",
+    "Robotiq",
 )
 
 
@@ -42,6 +45,141 @@ class SocketCanConnection:
     def __post_init__(self) -> None:
         if not self.interface or "/" in self.interface:
             raise ConfigurationError("SocketCAN interface must be a simple interface name")
+
+
+class FrankaRealtimeConfig(StrEnum):
+    """libfranka real-time scheduling behavior."""
+
+    ENFORCE = "enforce"
+    IGNORE = "ignore"
+
+
+@dataclass(frozen=True, slots=True)
+class FrankaSafetyLimits:
+    """DROID/Polymetis safety envelopes applied by the native controller."""
+
+    joint_lower_rad: tuple[float, ...] = (-2.65, -1.68, -2.80, -2.95, -2.70, 0.45, -2.90)
+    joint_upper_rad: tuple[float, ...] = (2.65, 1.68, 2.80, -0.16, 2.70, 4.40, 2.90)
+    joint_velocity_rad_s: tuple[float, ...] = (2.075, 2.075, 2.075, 2.075, 2.51, 2.51, 2.51)
+    torque_limit_nm: tuple[float, ...] = (86.0, 86.0, 86.0, 86.0, 11.5, 11.5, 11.5)
+    cartesian_lower_m: tuple[float, ...] = (-1.0, -1.0, -1.0)
+    cartesian_upper_m: tuple[float, ...] = (1.0, 1.0, 1.0)
+    joint_margin_rad: float = 0.2
+    velocity_margin_rad_s: float = 0.5
+    cartesian_margin_m: float = 0.05
+    joint_stiffness: float = 50.0
+    velocity_stiffness: float = 20.0
+    cartesian_stiffness: float = 200.0
+
+    def __post_init__(self) -> None:
+        seven_fields = (
+            "joint_lower_rad",
+            "joint_upper_rad",
+            "joint_velocity_rad_s",
+            "torque_limit_nm",
+        )
+        if any(len(getattr(self, name)) != 7 for name in seven_fields):
+            raise ConfigurationError("Franka joint safety limits must contain seven values")
+        if len(self.cartesian_lower_m) != 3 or len(self.cartesian_upper_m) != 3:
+            raise ConfigurationError("Franka Cartesian safety limits must contain three values")
+        if any(lo >= hi for lo, hi in zip(self.joint_lower_rad, self.joint_upper_rad, strict=True)):
+            raise ConfigurationError("each Franka lower joint limit must be below its upper limit")
+        cartesian_limits = zip(self.cartesian_lower_m, self.cartesian_upper_m, strict=True)
+        if any(lo >= hi for lo, hi in cartesian_limits):
+            raise ConfigurationError(
+                "each Franka Cartesian lower limit must be below its upper limit"
+            )
+        positive = (
+            *self.joint_velocity_rad_s,
+            *self.torque_limit_nm,
+            self.joint_margin_rad,
+            self.velocity_margin_rad_s,
+            self.cartesian_margin_m,
+            self.joint_stiffness,
+            self.velocity_stiffness,
+            self.cartesian_stiffness,
+        )
+        if any(value <= 0 for value in positive):
+            raise ConfigurationError("Franka safety margins, gains, and limits must be positive")
+        all_values = (
+            *self.joint_lower_rad,
+            *self.joint_upper_rad,
+            *self.cartesian_lower_m,
+            *self.cartesian_upper_m,
+            *positive,
+        )
+        if not all(math.isfinite(value) for value in all_values):
+            raise ConfigurationError("Franka safety limits must be finite")
+
+
+@dataclass(frozen=True, slots=True)
+class FrankaConnection:
+    """Connection and native-controller settings for a Franka Panda or FR3."""
+
+    address: str
+    realtime_config: FrankaRealtimeConfig = FrankaRealtimeConfig.IGNORE
+    libfranka_library: Path | None = None
+    native_control_frequency_hz: int = 1000
+    read_only: bool = False
+    reset_pose_rad: tuple[float, ...] = (
+        0.0,
+        -0.6283185307,
+        0.0,
+        -2.5132741229,
+        0.0,
+        1.8849555922,
+        0.0,
+    )
+    safety: FrankaSafetyLimits = FrankaSafetyLimits()
+
+    def __post_init__(self) -> None:
+        if not self.address or any(char.isspace() for char in self.address):
+            raise ConfigurationError("Franka address must be a non-empty hostname or IP address")
+        if self.native_control_frequency_hz != 1000:
+            raise ConfigurationError("libfranka native control frequency must be 1000 Hz")
+        if not isinstance(self.read_only, bool):
+            raise ConfigurationError("Franka read_only must be a boolean")
+        if len(self.reset_pose_rad) != 7:
+            raise ConfigurationError("Franka reset pose must contain seven joint positions")
+        if not all(math.isfinite(value) for value in self.reset_pose_rad):
+            raise ConfigurationError("Franka reset pose must be finite")
+        if not isinstance(self.realtime_config, FrankaRealtimeConfig):
+            try:
+                object.__setattr__(
+                    self, "realtime_config", FrankaRealtimeConfig(self.realtime_config)
+                )
+            except ValueError as error:
+                raise ConfigurationError("invalid Franka realtime configuration") from error
+        if self.libfranka_library is not None:
+            object.__setattr__(
+                self, "libfranka_library", Path(self.libfranka_library).expanduser().resolve()
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RobotiqConnection:
+    """Robotiq 2F serial Modbus RTU configuration."""
+
+    device: str
+    baud_rate: int = 115200
+    slave_id: int = 9
+    poll_frequency_hz: int = 50
+    min_position_raw: int = 3
+    max_position_raw: int = 230
+    default_speed: float = 1.0
+    default_force: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not self.device:
+            raise ConfigurationError("Robotiq serial device must not be empty")
+        if self.baud_rate <= 0 or self.poll_frequency_hz <= 0:
+            raise ConfigurationError("Robotiq baud and poll frequencies must be positive")
+        if not 1 <= self.slave_id <= 247:
+            raise ConfigurationError("Robotiq Modbus slave ID must be in [1, 247]")
+        if not 0 <= self.min_position_raw < self.max_position_raw <= 255:
+            raise ConfigurationError("Robotiq raw calibration must satisfy 0 <= min < max <= 255")
+        if not 0.0 <= self.default_speed <= 1.0 or not 0.0 <= self.default_force <= 1.0:
+            raise ConfigurationError("Robotiq speed and force must be normalized to [0, 1]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +210,7 @@ class SerialConnection:
             )
 
 
-ArmConnection = SocketCanConnection | EthernetConnection | SerialConnection
+ArmConnection = SocketCanConnection | EthernetConnection | SerialConnection | FrankaConnection
 
 
 def connection_for_interface(interface: str) -> ArmConnection:
@@ -139,7 +277,7 @@ _HANDLE_INPUT_LAYOUTS = {
 class ResolvedArmAssets:
     model_config: Path
     instance_config: Path
-    urdf: Path
+    urdf: Path | None
     effector_model_config: Path | None
     effector_instance_config: Path | None
 
@@ -166,14 +304,16 @@ def resolve_model_assets(
     arm_dir = root / "arms" / model
     model_config = arm_dir / f"{model}.json"
     instance = instance_config or arm_dir / f"{model}_01.json"
-    resolved_urdf = urdf or arm_dir / f"{model}.urdf"
+    resolved_urdf = urdf or (None if model == "Franka" else arm_dir / f"{model}.urdf")
     eff_model: Path | None = None
     eff_instance: Path | None = None
     if effector_model:
         eff_dir = root / "effectors" / effector_model
         eff_model = eff_dir / f"{effector_model}.json"
         eff_instance = effector_instance_config or eff_dir / f"{effector_model}_01.json"
-    required = [model_config, Path(instance), Path(resolved_urdf)]
+    required = [model_config, Path(instance)]
+    if resolved_urdf is not None:
+        required.append(Path(resolved_urdf))
     if eff_model is not None and eff_instance is not None:
         required.extend([eff_model, Path(eff_instance)])
     missing = [str(path) for path in required if not path.is_file()]
@@ -182,7 +322,7 @@ def resolve_model_assets(
     return ResolvedArmAssets(
         model_config=model_config,
         instance_config=Path(instance),
-        urdf=Path(resolved_urdf),
+        urdf=Path(resolved_urdf) if resolved_urdf is not None else None,
         effector_model_config=eff_model,
         effector_instance_config=Path(eff_instance) if eff_instance else None,
     )
@@ -199,6 +339,8 @@ class ArmConfig:
     effector_model: str | None = None
     effector_instance_config: Path | None = None
     urdf: Path | None = None
+    effector_connection: RobotiqConnection | None = None
+    control_frequency_hz: int = 100
     # First contact after the arm has sat idle can exceed a minute of native
     # device init (observed on physical YAM followers), so the default leaves
     # cold starts room to finish.
@@ -238,6 +380,18 @@ class ArmConfig:
                 f"unsupported effector {self.effector_model!r}; supported effectors: "
                 f"{', '.join(SUPPORTED_EFFECTORS)}"
             )
+        if self.model == "Franka" and not isinstance(self.connection, FrankaConnection):
+            raise ConfigurationError("Franka model requires a FrankaConnection")
+        if self.model != "Franka" and isinstance(self.connection, FrankaConnection):
+            raise ConfigurationError("FrankaConnection is only supported for the Franka model")
+        if self.effector_model == "Robotiq" and not isinstance(
+            self.effector_connection, RobotiqConnection
+        ):
+            raise ConfigurationError("Robotiq effector requires a RobotiqConnection")
+        if self.effector_connection is not None and self.effector_model != "Robotiq":
+            raise ConfigurationError("effector_connection is only supported for Robotiq")
+        if self.control_frequency_hz <= 0:
+            raise ConfigurationError("control_frequency_hz must be positive")
         if self.connect_timeout_s <= 0:
             raise ConfigurationError("connect_timeout_s must be positive")
         if self.leader_gravity_compensation is None:
