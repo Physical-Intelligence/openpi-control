@@ -9,6 +9,7 @@ Python process via ZeroMQ.
 | `Yam` | `E_Yam` | `E_Yam_Handle` |
 | `ARX_L5` | `E_ARX` | `E_ARX` |
 | `ARX_X5` | `E_ARX` | `E_ARX` |
+| `Franka` | `Robotiq` | n/a |
 
 ```python
 from openpi_control import ArmConfig, ArmSession, PositionCommand, SocketCanConnection
@@ -39,3 +40,6 @@ uv build --wheel
 ```
 
 The wheel is written to `dist/`.
+
+See [DROID Franka and Robotiq control](docs/droid.md) for the libfranka 0.6
+build, safety model, lifecycle, and hardware bring-up sequence.

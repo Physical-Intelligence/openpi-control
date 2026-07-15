@@ -30,7 +30,6 @@ from .config import (
     ResolvedArmAssets,
     RobotiqConnection,
     SerialConnection,
-    SocketCanConnection,
 )
 from .exceptions import (
     CommandRejectedError,
