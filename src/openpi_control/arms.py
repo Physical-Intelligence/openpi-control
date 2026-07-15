@@ -18,6 +18,7 @@ from .types import (
     InputState,
     JointServoReport,
     PositionCommand,
+    VelocityCommand,
 )
 
 
@@ -125,19 +126,33 @@ class FollowerArm(_Arm):
     ) -> None:
         super().__init__(config, ArmRole.FOLLOWER, topics, backend)
 
-    def command(self, command: PositionCommand) -> None:
+    def command(self, command: PositionCommand | VelocityCommand) -> None:
         with self._dispatch_lock:
             self._validate_command(command)
             self._backend.command(command)
 
-    def _validate_command(self, command: PositionCommand) -> None:
-        if command.position_rad.size != self.capabilities.dof:
+    def _validate_command(self, command: PositionCommand | VelocityCommand) -> None:
+        if not self.capabilities.supports_direct_commands:
+            raise CommandRejectedError(f"{self.name} does not accept direct commands")
+        joint_values = (
+            command.position_rad if isinstance(command, PositionCommand) else command.velocity_rad_s
+        )
+        if joint_values.size != self.capabilities.dof:
             raise CommandRejectedError(
-                f"command DOF {command.position_rad.size} does not match {self.name} DOF "
+                f"command DOF {joint_values.size} does not match {self.name} DOF "
                 f"{self.capabilities.dof}"
             )
+        if (
+            isinstance(command, VelocityCommand)
+            and not self.capabilities.supports_velocity_commands
+        ):
+            raise CommandRejectedError(f"{self.name} does not support velocity commands")
         if command.effector is not None and not self.capabilities.has_effector:
             raise CommandRejectedError(f"{self.name} has no configured effector")
+        if (
+            command.effector_speed is not None or command.effector_force is not None
+        ) and not self.capabilities.supports_effector_force:
+            raise CommandRejectedError(f"{self.name} does not support effector speed/force")
 
     def hold(self) -> None:
         with self._dispatch_lock:
@@ -190,9 +205,30 @@ class FollowerArm(_Arm):
                 )
             time.sleep(0.05)
 
+    def resume(self) -> None:
+        """Release a latched hold before issuing a new direct-command run."""
+        with self._dispatch_lock:
+            self._backend.resume()
+
     def move_to_ready(self) -> None:
         with self._dispatch_lock:
+            if not self.capabilities.supports_move_to_ready:
+                raise CommandRejectedError(f"{self.name} does not support move-to-ready")
             self._backend.move_to_ready()
+
+    def activate_effector(self) -> None:
+        """Run the configured effector's activation sequence without moving the arm."""
+        with self._dispatch_lock:
+            if not self.capabilities.supports_effector_activation:
+                raise CommandRejectedError(f"{self.name} does not support effector activation")
+            self._backend.activate_effector()
+
+    def recover(self) -> None:
+        """Recover a recoverable hardware fault without moving to the ready pose."""
+        with self._dispatch_lock:
+            if not self.capabilities.supports_recovery:
+                raise CommandRejectedError(f"{self.name} does not support recovery")
+            self._backend.recover()
 
     def _hold_for_cleanup(self) -> None:
         self._backend.hold()

@@ -24,6 +24,19 @@ STATUS_STRUCT = struct.Struct("@hhh10f10i")
 INPUT_STRUCT = struct.Struct("@bb2x5fb5bbx5h2x")
 MAX_INPUT_CHANNELS = 5
 
+# DROID messages are explicitly little-endian and packed. They intentionally do
+# not reuse JOINT_STRUCT, whose native-alignment ABI is retained for ARX/YAM.
+DROID_MAGIC = b"DRD1"
+DROID_COMMAND_STRUCT = struct.Struct("<4sBBBBQQ7f7f3f")
+DROID_STATE_STRUCT = struct.Struct("<4sBBHQQd7f7f7f7f7f6f6fiHHf")
+DROID_JOINT_COUNT = 7
+
+
+class DroidControlMode(IntEnum):
+    HOLD = 0
+    JOINT_POSITION = 1
+    JOINT_VELOCITY = 2
+
 
 class NativeCommand(IntEnum):
     SHUTDOWN = 1
@@ -37,6 +50,9 @@ class NativeCommand(IntEnum):
     HOLD = 33
     HEARTBEAT = 34
     SET_TORQ_RESCALE = 35
+    ACTIVATE_EFFECTOR = 36
+    RECOVER = 37
+    RESUME_DIRECT_COMMANDS = 38
 
 
 class NativeStatus(IntEnum):
@@ -56,6 +72,10 @@ CAP_LIVE_INPUT = 1 << 1
 CAP_GRAVITY_COMP = 1 << 2
 CAP_FORCE_FEEDBACK = 1 << 3
 CAP_MOVE_TO_READY = 1 << 4
+CAP_EFFECTOR_ACTIVATION = 1 << 5
+CAP_RECOVERY = 1 << 6
+CAP_EFFECTOR_FORCE = 1 << 7
+CAP_VELOCITY_COMMAND = 1 << 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,3 +164,100 @@ def decode_status(payload: bytes) -> tuple[NativeStatus, tuple[float, ...], tupl
     except ValueError as exc:
         raise ProtocolError(f"unknown native status {key}") from exc
     return status, tuple(values[3 : 3 + nf]), tuple(values[13 : 13 + ni])
+
+
+@dataclass(frozen=True, slots=True)
+class DroidStatePayload:
+    sequence: int
+    monotonic_ns: int
+    hardware_timestamp_s: float
+    position_rad: tuple[float, ...]
+    velocity_rad_s: tuple[float, ...]
+    effort_nm: tuple[float, ...]
+    commanded_position_rad: tuple[float, ...]
+    external_joint_torque_nm: tuple[float, ...]
+    cartesian_wrench: tuple[float, ...]
+    gripper: tuple[float, ...]
+    robot_mode: int
+    joint_contact_bits: int
+    joint_collision_bits: int
+    control_command_success_rate: float
+    flags: int
+
+
+def encode_droid_command(
+    *,
+    sequence: int,
+    monotonic_ns: int,
+    mode: DroidControlMode,
+    position_rad: tuple[float, ...],
+    velocity_rad_s: tuple[float, ...] = (0.0,) * DROID_JOINT_COUNT,
+    gripper_position: float,
+    gripper_speed: float,
+    gripper_force: float,
+) -> bytes:
+    if len(position_rad) != DROID_JOINT_COUNT or len(velocity_rad_s) != DROID_JOINT_COUNT:
+        raise ProtocolError("DROID commands require seven joint positions and velocities")
+    return DROID_COMMAND_STRUCT.pack(
+        DROID_MAGIC,
+        *PROTOCOL_VERSION,
+        int(mode),
+        0,
+        sequence,
+        monotonic_ns,
+        *position_rad,
+        *velocity_rad_s,
+        gripper_position,
+        gripper_speed,
+        gripper_force,
+    )
+
+
+def decode_droid_state(payload: bytes) -> DroidStatePayload:
+    if len(payload) != DROID_STATE_STRUCT.size:
+        raise ProtocolError(f"invalid DROID state payload size {len(payload)}")
+    values = DROID_STATE_STRUCT.unpack(payload)
+    if values[0] != DROID_MAGIC:
+        raise ProtocolError("invalid DROID state magic")
+    version = tuple(values[1:3])
+    if version != PROTOCOL_VERSION:
+        raise ProtocolError(f"incompatible DROID protocol {version}; expected {PROTOCOL_VERSION}")
+    offset = 3
+    flags = values[offset]
+    sequence, monotonic_ns, hardware_timestamp_s = values[offset + 1 : offset + 4]
+    offset += 4
+
+    def take(count: int) -> tuple[float, ...]:
+        nonlocal offset
+        result = tuple(float(value) for value in values[offset : offset + count])
+        offset += count
+        return result
+
+    position = take(7)
+    velocity = take(7)
+    effort = take(7)
+    commanded = take(7)
+    external = take(7)
+    wrench = take(6)
+    gripper = take(6)
+    robot_mode = int(values[offset])
+    contact_bits = int(values[offset + 1])
+    collision_bits = int(values[offset + 2])
+    success_rate = float(values[offset + 3])
+    return DroidStatePayload(
+        sequence=int(sequence),
+        monotonic_ns=int(monotonic_ns),
+        hardware_timestamp_s=float(hardware_timestamp_s),
+        position_rad=position,
+        velocity_rad_s=velocity,
+        effort_nm=effort,
+        commanded_position_rad=commanded,
+        external_joint_torque_nm=external,
+        cartesian_wrench=wrench,
+        gripper=gripper,
+        robot_mode=robot_mode,
+        joint_contact_bits=contact_bits,
+        joint_collision_bits=collision_bits,
+        control_command_success_rate=success_rate,
+        flags=int(flags),
+    )

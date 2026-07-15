@@ -25,9 +25,12 @@ from .config import (
     ArmConfig,
     ArmConnection,
     EthernetConnection,
+    FrankaConnection,
     InputLayout,
     ResolvedArmAssets,
+    RobotiqConnection,
     SerialConnection,
+    SocketCanConnection,
 )
 from .exceptions import (
     CommandRejectedError,
@@ -40,18 +43,25 @@ from .exceptions import (
 )
 from .protocol import (
     CAP_DIRECT,
+    CAP_EFFECTOR_ACTIVATION,
+    CAP_EFFECTOR_FORCE,
     CAP_FORCE_FEEDBACK,
     CAP_GRAVITY_COMP,
     CAP_LIVE_INPUT,
     CAP_MOVE_TO_READY,
+    CAP_RECOVERY,
+    CAP_VELOCITY_COMMAND,
     JOINT_STRUCT,
     PROTOCOL_VERSION,
     ArmTopics,
+    DroidControlMode,
     NativeCommand,
     NativeStatus,
+    decode_droid_state,
     decode_inputs,
     decode_status,
     encode_command,
+    encode_droid_command,
     port_candidates,
 )
 from .servos import trossen_eth
@@ -65,6 +75,7 @@ from .types import (
     JointServoReport,
     JointState,
     PositionCommand,
+    VelocityCommand,
 )
 from .urdf_inertial import prepare_merged_urdf
 
@@ -117,6 +128,8 @@ def native_executable() -> Path:
 
 
 def validate_connection(connection: ArmConnection) -> None:
+    if isinstance(connection, FrankaConnection):
+        return
     if isinstance(connection, EthernetConnection):
         if not trossen_eth.reachable(connection.ip):
             raise ConnectionUnavailableError(
@@ -373,7 +386,9 @@ class NativeArmBackend(ArmBackend):
         # node a merged URDF whose end link inertial is replaced with the effector
         # mass model (zero mass when no effector). A caller-supplied URDF is
         # trusted as-is and skips merging.
-        if config.urdf is None:
+        if isinstance(config.connection, FrankaConnection):
+            urdf_path = None
+        elif config.urdf is None:
             urdf_path = prepare_merged_urdf(
                 assets, model=config.model, effector_model=config.effector_model
             )
@@ -386,11 +401,71 @@ class NativeArmBackend(ArmBackend):
             self._inputs_sub = _Subscriber(self._context, topics.inputs)
         if role is ArmRole.FOLLOWER:
             self._direct_pub = _Publisher(self._context, topics.direct_command)
-        # The native node takes the bus identity as an opaque string: a SocketCAN
-        # interface name, the controller IPv4 address for Ethernet drivers, or
-        # the tty device path for serial buses (which also need the catalog baud).
-        if isinstance(config.connection, EthernetConnection):
+        if isinstance(config.connection, FrankaConnection):
+            connection_args = [
+                "--franka_address",
+                config.connection.address,
+                "--franka_realtime_config",
+                config.connection.realtime_config.value,
+                "--franka_reset_pose",
+                ",".join(str(value) for value in config.connection.reset_pose_rad),
+                "--franka_joint_lower",
+                ",".join(str(value) for value in config.connection.safety.joint_lower_rad),
+                "--franka_joint_upper",
+                ",".join(str(value) for value in config.connection.safety.joint_upper_rad),
+                "--franka_joint_velocity",
+                ",".join(str(value) for value in config.connection.safety.joint_velocity_rad_s),
+                "--franka_torque_limit",
+                ",".join(str(value) for value in config.connection.safety.torque_limit_nm),
+                "--franka_cartesian_lower",
+                ",".join(str(value) for value in config.connection.safety.cartesian_lower_m),
+                "--franka_cartesian_upper",
+                ",".join(str(value) for value in config.connection.safety.cartesian_upper_m),
+                "--franka_safety_scalars",
+                ",".join(
+                    str(value)
+                    for value in (
+                        config.connection.safety.joint_margin_rad,
+                        config.connection.safety.velocity_margin_rad_s,
+                        config.connection.safety.cartesian_margin_m,
+                        config.connection.safety.joint_stiffness,
+                        config.connection.safety.velocity_stiffness,
+                        config.connection.safety.cartesian_stiffness,
+                    )
+                ),
+            ]
+            if config.connection.libfranka_library is not None:
+                connection_args.extend(
+                    ["--libfranka_library", str(config.connection.libfranka_library)]
+                )
+            if config.connection.read_only:
+                connection_args.append("--franka_read_only")
+            effector_connection = config.effector_connection
+            if isinstance(effector_connection, RobotiqConnection):
+                connection_args.extend(
+                    [
+                        "--robotiq_device",
+                        effector_connection.device,
+                        "--robotiq_baud_rate",
+                        str(effector_connection.baud_rate),
+                        "--robotiq_slave_id",
+                        str(effector_connection.slave_id),
+                        "--robotiq_poll_frequency",
+                        str(effector_connection.poll_frequency_hz),
+                        "--robotiq_min_position_raw",
+                        str(effector_connection.min_position_raw),
+                        "--robotiq_max_position_raw",
+                        str(effector_connection.max_position_raw),
+                        "--robotiq_default_speed",
+                        str(effector_connection.default_speed),
+                        "--robotiq_default_force",
+                        str(effector_connection.default_force),
+                    ]
+                )
+            device_type = "franka"
+        elif isinstance(config.connection, EthernetConnection):
             connection_args = ["--control_port", config.connection.ip]
+            device_type = "arms"
         elif isinstance(config.connection, SerialConnection):
             connection_args = [
                 "--control_port",
@@ -398,14 +473,16 @@ class NativeArmBackend(ArmBackend):
                 "--baud_rate",
                 str(config.catalog_baudrate()),
             ]
+            device_type = "arms"
         else:
             connection_args = ["--control_port", config.connection.interface]
+            device_type = "arms"
         args = [
             str(executable),
             "--role",
             role.value,
             "--device_type",
-            "arms",
+            device_type,
             "--device_model",
             config.model,
             "--device_id",
@@ -413,7 +490,11 @@ class NativeArmBackend(ArmBackend):
             "--logical_name",
             config.name,
             "--control_frequency",
-            str(role.control_frequency_hz),
+            str(
+                config.control_frequency_hz
+                if isinstance(config.connection, FrankaConnection)
+                else role.control_frequency_hz
+            ),
             "--info_level",
             os.environ.get("OPENPI_CONTROL_INFO_LEVEL", "0"),
             "--topic_type",
@@ -422,7 +503,7 @@ class NativeArmBackend(ArmBackend):
             # which this node does not ship; force the Pinocchio implementation.
             # Effector configs declaring "Algo" keep priority over this flag.
             "--algo_type",
-            "Pinocchio",
+            "None" if isinstance(config.connection, FrankaConnection) else "Pinocchio",
             "--topic_state",
             topics.state,
             "--topic_live_command",
@@ -437,8 +518,6 @@ class NativeArmBackend(ArmBackend):
             str(assets.model_config),
             "--arm_instance_config",
             str(assets.instance_config),
-            "--urdf_path",
-            str(urdf_path),
             "--force_feedback",
             "-1",
             # Connect is passive: the arm holds its current pose instead of
@@ -447,6 +526,16 @@ class NativeArmBackend(ArmBackend):
             "--dont_go_to_home_pos",
             *connection_args,
         ]
+        if urdf_path is not None:
+            args.extend(["--urdf_path", str(urdf_path)])
+        child_env = os.environ.copy()
+        if isinstance(config.connection, FrankaConnection) and config.connection.libfranka_library:
+            library_path = config.connection.libfranka_library
+            library_dir = library_path if library_path.is_dir() else library_path.parent
+            existing = child_env.get("LD_LIBRARY_PATH", "")
+            child_env["LD_LIBRARY_PATH"] = (
+                f"{library_dir}:{existing}" if existing else str(library_dir)
+            )
         if self._paired_follower_state_topic:
             args.extend(["--paired_follower_state_topic", self._paired_follower_state_topic])
         if config.torq_rescale is not None:
@@ -503,6 +592,7 @@ class NativeArmBackend(ArmBackend):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                env=child_env,
                 pass_fds=(parent_liveness_read_fd,),
                 # Terminal-generated signals target the foreground process
                 # group. Give the supervised node its own session so Python
@@ -525,7 +615,9 @@ class NativeArmBackend(ArmBackend):
                 if self._process.poll() is not None:
                     raise self._stopped_process_error("native process stopped during connect")
                 if self._reader_error is not None:
-                    raise NativeProcessError(f"native protocol reader failed: {self._reader_error}")
+                    raise NativeProcessError(
+                        f"native protocol reader failed: {self._reader_error}"
+                    )
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     missing = ", ".join(
@@ -677,6 +769,9 @@ class NativeArmBackend(ArmBackend):
         return self._joint_names
 
     def _consume_state(self, payload: bytes) -> None:
+        if self._config is not None and self._config.model == "Franka":
+            self._consume_droid_state(payload)
+            return
         if len(payload) != JOINT_STRUCT.size:
             raise ProtocolError(f"invalid joint payload size {len(payload)}")
         assert self._config is not None and self._role is not None
@@ -743,6 +838,73 @@ class NativeArmBackend(ArmBackend):
                 self._ready = True
             self._condition.notify_all()
 
+    def _consume_droid_state(self, payload: bytes) -> None:
+        assert self._config is not None and self._role is not None
+        state = decode_droid_state(payload)
+        from .types import ArmDiagnostics
+
+        with self._condition:
+            previous_mode = self._state.mode if self._state else ArmMode.HOLD
+            gripper = state.gripper
+            self._state = ArmState(
+                name=self._config.name,
+                role=self._role,
+                joints=JointState(
+                    names=self._config.joint_names(),
+                    position_rad=state.position_rad,
+                    velocity_rad_s=state.velocity_rad_s,
+                    effort_nm=state.effort_nm,
+                    temperature_c=(0.0,) * 7,
+                    current_a=(0.0,) * 7,
+                ),
+                effector=(
+                    EffectorState(
+                        position=gripper[0],
+                        velocity_s=gripper[1],
+                        effort_nm=gripper[2],
+                        temperature_c=gripper[3],
+                        current_a=gripper[4],
+                        connected=bool(state.flags & 1),
+                        activated=bool(state.flags & 2),
+                        faulted=bool(state.flags & 8),
+                    )
+                    if self._config.effector_model == "Robotiq"
+                    else None
+                ),
+                monotonic_timestamp=state.monotonic_ns / 1e9,
+                wall_timestamp=time.time(),
+                sequence=state.sequence,
+                mode=previous_mode,
+                diagnostics=ArmDiagnostics(
+                    external_joint_torque_nm=state.external_joint_torque_nm,
+                    cartesian_wrench=state.cartesian_wrench,
+                    commanded_position_rad=state.commanded_position_rad,
+                    joint_contact=tuple(
+                        bool(state.joint_contact_bits & (1 << index)) for index in range(7)
+                    ),
+                    joint_collision=tuple(
+                        bool(state.joint_collision_bits & (1 << index)) for index in range(7)
+                    ),
+                    robot_mode=state.robot_mode,
+                    control_command_success_rate=state.control_command_success_rate,
+                    hardware_timestamp_s=state.hardware_timestamp_s,
+                    effector_target=(
+                        gripper[5] if self._config.effector_model == "Robotiq" else None
+                    ),
+                    hardware_faulted=bool(state.flags & 4),
+                ),
+            )
+            self._state_generation += 1
+            if (
+                self._pending_ready_request_id is not None
+                and self._pending_ready_state_generation is not None
+                and self._state_generation > self._pending_ready_state_generation
+            ):
+                self._pending_ready_request_id = None
+                self._pending_ready_state_generation = None
+                self._ready = True
+            self._condition.notify_all()
+
     def _consume_inputs(self, payload: bytes) -> None:
         axes, buttons = decode_inputs(payload)
         layout = self._input_layout
@@ -785,6 +947,10 @@ class NativeArmBackend(ArmBackend):
                     supports_gravity_compensation=bool(flags & CAP_GRAVITY_COMP),
                     supports_force_feedback=bool(flags & CAP_FORCE_FEEDBACK),
                     supports_move_to_ready=bool(flags & CAP_MOVE_TO_READY),
+                    supports_effector_activation=bool(flags & CAP_EFFECTOR_ACTIVATION),
+                    supports_recovery=bool(flags & CAP_RECOVERY),
+                    supports_effector_force=bool(flags & CAP_EFFECTOR_FORCE),
+                    supports_velocity_commands=bool(flags & CAP_VELOCITY_COMMAND),
                     button_names=self._input_layout.button_names,
                     axis_names=self._input_layout.axis_names,
                 )
@@ -830,6 +996,7 @@ class NativeArmBackend(ArmBackend):
                         wall_timestamp=self._state.wall_timestamp,
                         sequence=self._state.sequence,
                         mode=mode_values[ints[0]],
+                        diagnostics=self._state.diagnostics,
                     )
             self._condition.notify_all()
 
@@ -946,9 +1113,7 @@ class NativeArmBackend(ArmBackend):
             self._raise_if_hardware_fault()
             if self._closed or not self._running:
                 if self._reader_error is not None:
-                    raise NativeProcessError(
-                        f"native protocol reader failed: {self._reader_error}"
-                    )
+                    raise NativeProcessError(f"native protocol reader failed: {self._reader_error}")
                 raise NativeProcessError("native process is not running")
             while self._inputs is None:
                 self._raise_if_hardware_fault()
@@ -972,7 +1137,7 @@ class NativeArmBackend(ArmBackend):
         with self._condition:
             return self._inputs
 
-    def command(self, command: PositionCommand, *, live: bool = False) -> None:
+    def command(self, command: PositionCommand | VelocityCommand, *, live: bool = False) -> None:
         if live:
             raise CommandRejectedError("native live input is published by the leader process")
         with self._condition:
@@ -983,7 +1148,52 @@ class NativeArmBackend(ArmBackend):
                 raise CommandRejectedError("arm is not connected")
             self._direct_pub.send(self._encode_joint_command(command))
 
-    def _encode_joint_command(self, command: PositionCommand) -> bytes:
+    def _encode_joint_command(self, command: PositionCommand | VelocityCommand) -> bytes:
+        if self._config is not None and self._config.model == "Franka":
+            state_effector = self._state.effector if self._state is not None else None
+            connection = self._config.effector_connection
+            default_speed = connection.default_speed if connection is not None else 1.0
+            default_force = connection.default_force if connection is not None else 1.0
+            if command.effector is None and state_effector is None:
+                gripper_position = 1.0
+            else:
+                gripper_position = (
+                    command.effector if command.effector is not None else state_effector.position
+                )
+            state_position = (
+                tuple(float(value) for value in self._state.joints.position_rad)
+                if self._state is not None
+                else (0.0,) * 7
+            )
+            is_velocity = isinstance(command, VelocityCommand)
+            return encode_droid_command(
+                sequence=int(time.monotonic_ns() & 0xFFFFFFFFFFFFFFFF),
+                monotonic_ns=int(command.created_monotonic * 1e9),
+                mode=DroidControlMode.JOINT_VELOCITY
+                if is_velocity
+                else DroidControlMode.JOINT_POSITION,
+                position_rad=state_position
+                if is_velocity
+                else tuple(float(value) for value in command.position_rad),
+                velocity_rad_s=(
+                    tuple(float(value) for value in command.velocity_rad_s)
+                    if is_velocity
+                    else (0.0,) * 7
+                ),
+                gripper_position=float(gripper_position),
+                gripper_speed=float(
+                    command.effector_speed
+                    if command.effector_speed is not None
+                    else default_speed
+                ),
+                gripper_force=float(
+                    command.effector_force
+                    if command.effector_force is not None
+                    else default_force
+                ),
+            )
+        if isinstance(command, VelocityCommand):
+            raise CommandRejectedError("velocity commands are only supported by Franka followers")
         positions = list(map(float, command.position_rad))
         effector = command.effector
         if self._config is not None and self._config.effector_model is not None:
@@ -1016,6 +1226,9 @@ class NativeArmBackend(ArmBackend):
 
     def hold(self) -> None:
         self._send_lifecycle(NativeCommand.HOLD)
+
+    def resume(self) -> None:
+        self._send_lifecycle(NativeCommand.RESUME_DIRECT_COMMANDS)
 
     def pause_live_input(self, paused: bool) -> None:
         self._send_lifecycle(
@@ -1099,6 +1312,14 @@ class NativeArmBackend(ArmBackend):
                         self._pending_ready_request_id = None
                         self._pending_ready_state_generation = None
 
+    def activate_effector(self) -> None:
+        self._send_lifecycle(NativeCommand.ACTIVATE_EFFECTOR, timeout_s=15.0)
+
+    def recover(self) -> None:
+        with self._condition:
+            self._hardware_fault_message = None
+        self._send_lifecycle(NativeCommand.RECOVER, timeout_s=15.0)
+
     def _replace_mode(
         self, mode: ArmMode, *, expected_reader: threading.Thread | None = None
     ) -> None:
@@ -1116,6 +1337,7 @@ class NativeArmBackend(ArmBackend):
                 wall_timestamp=self._state.wall_timestamp,
                 sequence=self._state.sequence,
                 mode=mode,
+                diagnostics=self._state.diagnostics,
             )
             self._condition.notify_all()
 

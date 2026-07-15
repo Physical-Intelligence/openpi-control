@@ -14,6 +14,7 @@ from .types import (
     InputState,
     JointServoReport,
     PositionCommand,
+    VelocityCommand,
 )
 
 
@@ -42,10 +43,16 @@ class ArmBackend(ABC):
     def latest_inputs(self) -> InputState | None: ...
 
     @abstractmethod
-    def command(self, command: PositionCommand, *, live: bool = False) -> None: ...
+    def command(
+        self, command: PositionCommand | VelocityCommand, *, live: bool = False
+    ) -> None: ...
 
     @abstractmethod
     def hold(self) -> None: ...
+
+    def resume(self) -> None:
+        """Release a latched hold when supported by the backend."""
+        return None
 
     @abstractmethod
     def pause_live_input(self, paused: bool) -> None: ...
@@ -70,6 +77,12 @@ class ArmBackend(ABC):
 
     @abstractmethod
     def move_to_ready(self) -> None: ...
+
+    @abstractmethod
+    def activate_effector(self) -> None: ...
+
+    @abstractmethod
+    def recover(self) -> None: ...
 
     @abstractmethod
     def close(self, *, move_to_ready: bool = False) -> None: ...
