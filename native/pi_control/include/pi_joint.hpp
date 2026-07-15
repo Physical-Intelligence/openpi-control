@@ -31,7 +31,7 @@ class Joint {
     /*!
      * @brief Asymmetric upper-bound safety margin (rad) for normalized [0, 1] command interpretation.
      *
-     * Only consumed by ``DeviceEffector::get_gripper_pos_rad_relative_from_normalized``: when a leader
+     * Only consumed by ``DeviceEffectorArx::get_gripper_pos_rad_relative_from_normalized``: when a leader
      * (or AI policy) publishes ``normalized=1.0`` (e.g. a spring-loaded handle resting at "fully open"),
      * the follower's effective target becomes ``pos_max - pos_max_safety_margin_`` instead of the raw
      * ``pos_max`` so that PID overshoot / encoder noise at the steady-state cannot push the actual

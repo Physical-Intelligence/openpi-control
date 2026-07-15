@@ -117,6 +117,18 @@ class Device {
      */
     virtual ReturnCode get_observation(MsgJoints& msg) = 0;
 
+    virtual bool uses_droid_protocol() const { return false; }
+    virtual ReturnCode apply_action(const MsgDroidCommand& msg) {
+        (void)msg;
+        return ReturnCode::NOT_SUPPORTED;
+    }
+    virtual ReturnCode get_observation(MsgDroidState& msg) {
+        (void)msg;
+        return ReturnCode::NOT_SUPPORTED;
+    }
+    virtual ReturnCode activate_effector() { return ReturnCode::NOT_SUPPORTED; }
+    virtual ReturnCode recover() { return ReturnCode::NOT_SUPPORTED; }
+
     /*!
      * @brief Applies joystick commands to the device.
      * @param msg_joystick Joystick information message.

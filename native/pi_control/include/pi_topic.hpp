@@ -4,6 +4,8 @@
  */
 
 #pragma once
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -32,6 +34,9 @@
 #define DEVICE_COMMAND_HOLD                        33
 #define DEVICE_COMMAND_HEARTBEAT                   34  ///< Client-liveness heartbeat; payload-free, arms the dead-client watchdog.
 #define DEVICE_COMMAND_SET_TORQ_RESCALE            35  ///< Runtime per-joint torq_rescale update (float params, one per arm joint).
+#define DEVICE_COMMAND_ACTIVATE_EFFECTOR           36
+#define DEVICE_COMMAND_RECOVER                     37
+#define DEVICE_COMMAND_RESUME_DIRECT_COMMANDS      38
 
 #define DEVICE_INFO_READY_NOW 1  ///< Device is ready; param_int[0] is the completed lifecycle request id, if any.
 #define DEVICE_INFO_EFFECTOR  10 ///< Device info code indicating that the device is an effector.
@@ -78,6 +83,10 @@
 #define PI_CONTROL_CAP_GRAVITY_COMP        (1 << 2)
 #define PI_CONTROL_CAP_FORCE_FEEDBACK      (1 << 3)
 #define PI_CONTROL_CAP_MOVE_TO_READY       (1 << 4)
+#define PI_CONTROL_CAP_EFFECTOR_ACTIVATION  (1 << 5)
+#define PI_CONTROL_CAP_RECOVERY             (1 << 6)
+#define PI_CONTROL_CAP_EFFECTOR_FORCE       (1 << 7)
+#define PI_CONTROL_CAP_FRANKA               (1 << 8)
 
 // Source enum for DEVICE_INFO_READY_MOVE_IN_PROGRESS param_int[0]. Concrete devices pass
 // these via Device::publish_ready_move_progress() so Python can distinguish startup vs
@@ -140,6 +149,41 @@ class MsgJoints {
         data_joint.frame_age_ms_ = frame_age_ms;
         joints_.push_back(data_joint);
     }
+};
+
+enum class DroidControlMode : uint8_t {
+    HOLD = 0,
+    JOINT_POSITION = 1,
+    JOINT_VELOCITY = 2,
+};
+
+struct MsgDroidCommand {
+    uint64_t sequence = 0;
+    uint64_t monotonic_ns = 0;
+    DroidControlMode mode = DroidControlMode::HOLD;
+    std::array<float, 7> joint_position{};
+    std::array<float, 7> joint_velocity{};
+    float gripper_position = 1.0f;  // 0 closed, 1 open.
+    float gripper_speed = 1.0f;
+    float gripper_force = 1.0f;
+};
+
+struct MsgDroidState {
+    uint16_t flags = 0;
+    uint64_t sequence = 0;
+    uint64_t monotonic_ns = 0;
+    double hardware_timestamp_s = 0.0;
+    std::array<float, 7> joint_position{};
+    std::array<float, 7> joint_velocity{};
+    std::array<float, 7> joint_effort{};
+    std::array<float, 7> commanded_joint_position{};
+    std::array<float, 7> external_joint_torque{};
+    std::array<float, 6> cartesian_wrench{};
+    std::array<float, 6> gripper{};  // position, velocity, effort, temperature, current, target.
+    int32_t robot_mode = 0;
+    uint16_t joint_contact_bits = 0;
+    uint16_t joint_collision_bits = 0;
+    float control_command_success_rate = 0.0f;
 };
 
 /*!
@@ -265,6 +309,11 @@ class Topic {
      * @return ReturnCode::SUCCESS if successful, otherwise an error code.
      */
     virtual ReturnCode publish(const MsgJoints& msg);
+
+    virtual ReturnCode publish(const MsgDroidState& msg) {
+        (void)msg;
+        return ReturnCode::NOT_SUPPORTED;
+    }
 
     /*!
      * @brief Publishes joystick input information.
