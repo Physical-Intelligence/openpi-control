@@ -10,6 +10,7 @@
 #include "pi_device.hpp"
 #include "pi_device_arm_can.hpp"
 #include "pi_device_arm_serial.hpp"
+#include "pi_device_franka.hpp"
 #include "pi_device_config.hpp"
 #include "pi_device_effector_can.hpp"
 #include "pi_device_effector_controller.hpp"
@@ -47,11 +48,44 @@ ReturnCode Device::set_runtime_force_feedback_gain(float gain) {
 }
 
 ReturnCode Device::runtime_hold() {
-    if (rejects_direct_commands()) {
-        return ReturnCode::BUSY;
+    {
+        std::lock_guard<std::mutex> lock(emergency_mutex_);
+        if (emergency_state_ != EmergencyRecoveryState::NONE ||
+            move_to_ready_cmd_state_ != MoveToReadyCmdState::IDLE) {
+            return ReturnCode::BUSY;
+        }
+        direct_commands_paused_ = true;
     }
     clear_command_buffers_for_move_to_ready();
     return ReturnCode::SUCCESS;
+}
+
+ReturnCode Device::resume_direct_commands() {
+    std::lock_guard<std::mutex> lock(emergency_mutex_);
+    if (emergency_state_ != EmergencyRecoveryState::NONE ||
+        move_to_ready_cmd_state_ != MoveToReadyCmdState::IDLE) {
+        return ReturnCode::BUSY;
+    }
+    direct_commands_paused_ = false;
+    return ReturnCode::SUCCESS;
+}
+
+ReturnCode Device::dispatch_direct_action(const MsgJoints& msg) {
+    std::lock_guard<std::mutex> lock(emergency_mutex_);
+    if (direct_commands_paused_ || emergency_state_ != EmergencyRecoveryState::NONE ||
+        move_to_ready_cmd_state_ != MoveToReadyCmdState::IDLE) {
+        return ReturnCode::BUSY;
+    }
+    return apply_action(msg);
+}
+
+ReturnCode Device::dispatch_direct_action(const MsgDroidCommand& msg) {
+    std::lock_guard<std::mutex> lock(emergency_mutex_);
+    if (direct_commands_paused_ || emergency_state_ != EmergencyRecoveryState::NONE ||
+        move_to_ready_cmd_state_ != MoveToReadyCmdState::IDLE) {
+        return ReturnCode::BUSY;
+    }
+    return apply_action(msg);
 }
 
 bool Device::is_running() {
@@ -339,14 +373,18 @@ ReturnCode Device::step() {
                 }
             }
         } else if (role_ == Role::FOLLOWER) {
-            MsgJoints msg;
-            return_code = get_observation(msg);
-            if (return_code != ReturnCode::SUCCESS) {
-                PI_ERROR("Failed to get follower joint observation");
-                return return_code;
+            if (uses_droid_protocol()) {
+                MsgDroidState msg;
+                return_code = get_observation(msg);
+                if (return_code == ReturnCode::SUCCESS) return_code = p_topic_->publish(msg);
+            } else {
+                MsgJoints msg;
+                return_code = get_observation(msg);
+                if (return_code == ReturnCode::SUCCESS) {
+                    msg.measured_idc_current_ = 0.0f;
+                    return_code = p_topic_->publish(msg);
+                }
             }
-            msg.measured_idc_current_ = 0.0f;
-            return_code = p_topic_->publish(msg);
             if (return_code != ReturnCode::SUCCESS) {
                 PI_ERROR("Failed to publish follower joint observation");
                 return return_code;
@@ -582,6 +620,10 @@ Device* Device::new_device(const DeviceConfig& cfg_model, const DeviceConfig& cf
                     p_device = new DeviceArmSerial(cla);
                     PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceArmSerial for %s_%s",
                             cla.device_model.c_str(), cla.device_id.c_str());
+                } else if (arm_type == "franka") {
+                    p_device = new DeviceFranka(cla);
+                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceFranka for %s_%s",
+                            cla.device_model.c_str(), cla.device_id.c_str());
                 } else {
                     PI_ERROR("Invalid arm type: %s", arm_type.c_str());
                     return nullptr;
@@ -709,6 +751,7 @@ ReturnCode Device::enter_emergency_recovery(ReturnCode cause, int failed_joint_i
     {
         std::lock_guard<std::mutex> lock(emergency_mutex_);
         if (emergency_state_ == EmergencyRecoveryState::NONE) {
+            direct_commands_paused_ = true;
             emergency_state_ = EmergencyRecoveryState::REQUESTED;
             emergency_cause_ = cause_int;
             emergency_failed_joint_id_ = failed_joint_id;

@@ -1,6 +1,9 @@
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -47,6 +50,43 @@ class TestDevice : public Device {
     int joint_action_count = 0;
     int joystick_action_count = 0;
     int follower_action_count = 0;
+};
+
+class BlockingDirectDevice : public TestDevice {
+   public:
+    BlockingDirectDevice(const CommandLineArgs& cla, int dof_total)
+        : TestDevice(cla, dof_total) {}
+
+    ReturnCode apply_action(const MsgJoints&) override {
+        std::unique_lock<std::mutex> lock(mutex);
+        direct_entered = true;
+        condition.notify_all();
+        condition.wait(lock, [this] { return release_direct; });
+        ++joint_action_count;
+        return ReturnCode::SUCCESS;
+    }
+
+    void wait_for_direct() {
+        std::unique_lock<std::mutex> lock(mutex);
+        condition.wait(lock, [this] { return direct_entered; });
+    }
+
+    void release() {
+        std::lock_guard<std::mutex> lock(mutex);
+        release_direct = true;
+        condition.notify_all();
+    }
+
+    int clear_count = 0;
+
+   protected:
+    void clear_command_buffers_for_move_to_ready() override { ++clear_count; }
+
+   private:
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool direct_entered = false;
+    bool release_direct = false;
 };
 
 CommandLineArgs make_cla() {
@@ -214,6 +254,81 @@ TEST(TopicZmqStep, ReportsMalformedLifecyclePayload) {
                 zmq::send_flags::none);
 
     EXPECT_EQ(topic.step(), ReturnCode::INVALID_PARAM);
+}
+
+TEST(DeviceDirectCommandLatch, HoldRequiresExplicitResume) {
+    CommandLineArgs cla = make_cla();
+    TestDevice device(cla, 1);
+
+    EXPECT_FALSE(device.rejects_direct_commands());
+    EXPECT_EQ(device.runtime_hold(), ReturnCode::SUCCESS);
+    EXPECT_TRUE(device.rejects_direct_commands());
+    EXPECT_EQ(device.resume_direct_commands(), ReturnCode::SUCCESS);
+    EXPECT_FALSE(device.rejects_direct_commands());
+}
+
+TEST(DeviceDirectCommandLatch, ConcurrentHoldCannotBeOverwrittenByAuthorizedCommand) {
+    CommandLineArgs cla = make_cla();
+    BlockingDirectDevice device(cla, 1);
+    MsgJoints command;
+    command.add_joint_info(0, 0, 0, 0, 0);
+    std::atomic<bool> hold_done{false};
+    ReturnCode command_result = ReturnCode::FAIL;
+    ReturnCode hold_result = ReturnCode::FAIL;
+
+    std::thread command_thread([&] { command_result = device.dispatch_direct_action(command); });
+    device.wait_for_direct();
+    std::thread hold_thread([&] {
+        hold_result = device.runtime_hold();
+        hold_done = true;
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    EXPECT_FALSE(hold_done);
+    device.release();
+    command_thread.join();
+    hold_thread.join();
+
+    EXPECT_EQ(command_result, ReturnCode::SUCCESS);
+    EXPECT_EQ(hold_result, ReturnCode::SUCCESS);
+    EXPECT_EQ(device.clear_count, 1);
+    EXPECT_TRUE(device.rejects_direct_commands());
+}
+
+TEST(TopicZmqStep, HoldRejectsQueuedDirectCommandInSameStep) {
+    CommandLineArgs cla = make_cla();
+    TestDevice device(cla, 1);
+    TopicZmq topic(&device, cla, 0, nullptr);
+
+    topic.sub_command_.close();
+    topic.sub_command_ = zmq::socket_t(topic.context_, ZMQ_PAIR);
+    const std::string lifecycle_endpoint =
+        "inproc://topic_zmq_step_hold_lifecycle_" + cla.device_id;
+    topic.sub_command_.bind(lifecycle_endpoint);
+    zmq::socket_t lifecycle_sender(topic.context_, ZMQ_PAIR);
+    lifecycle_sender.connect(lifecycle_endpoint);
+
+    topic.sub_direct_joint_.close();
+    topic.sub_direct_joint_ = zmq::socket_t(topic.context_, ZMQ_PAIR);
+    const std::string direct_endpoint =
+        "inproc://topic_zmq_step_hold_direct_" + cla.device_id;
+    topic.sub_direct_joint_.bind(direct_endpoint);
+    zmq::socket_t direct_sender(topic.context_, ZMQ_PAIR);
+    direct_sender.connect(direct_endpoint);
+
+    ZmqCommand hold{};
+    hold.command = DEVICE_COMMAND_HOLD;
+    lifecycle_sender.send(zmq::buffer(topic.topic_lifecycle_), zmq::send_flags::sndmore);
+    lifecycle_sender.send(zmq::buffer(&hold, sizeof(hold)), zmq::send_flags::none);
+
+    ZmqJointInfo joint{};
+    joint.msg_type = static_cast<int>(MsgType::JOINT_INFO);
+    joint.joint_num = 1;
+    direct_sender.send(zmq::buffer(topic.topic_direct_command_), zmq::send_flags::sndmore);
+    direct_sender.send(zmq::buffer(&joint, sizeof(joint)), zmq::send_flags::none);
+
+    EXPECT_EQ(topic.step(), ReturnCode::BUSY);
+    EXPECT_EQ(device.joint_action_count, 0);
 }
 
 TEST(TopicZmqStep, StopDoesNotDispatchQueuedJointCommand) {

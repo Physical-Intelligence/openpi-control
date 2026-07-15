@@ -163,6 +163,32 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         "Explicit URDF path")(
         OPT_PARENT_LIVENESS_FD, po::value<int>()->default_value(-1),
         "Inherited read end of the supervising process's liveness pipe")(
+        OPT_FRANKA_ADDRESS, po::value<std::string>()->default_value(""),
+        "Franka control hostname or IP")(
+        OPT_FRANKA_REALTIME_CONFIG, po::value<std::string>()->default_value("ignore"),
+        "libfranka realtime scheduling: enforce or ignore")(
+        OPT_FRANKA_READ_ONLY, po::bool_switch()->default_value(false),
+        "Read Franka state without starting torque control")(
+        OPT_FRANKA_RESET_POSE, po::value<std::string>()->default_value(""),
+        "Comma-separated seven-joint reset pose")(
+        OPT_LIBFRANKA_LIBRARY, po::value<std::string>()->default_value(""),
+        "Optional libfranka library override")(
+        OPT_FRANKA_JOINT_LOWER, po::value<std::string>()->default_value(""), "Franka joint lower limits")(
+        OPT_FRANKA_JOINT_UPPER, po::value<std::string>()->default_value(""), "Franka joint upper limits")(
+        OPT_FRANKA_JOINT_VELOCITY, po::value<std::string>()->default_value(""), "Franka velocity limits")(
+        OPT_FRANKA_TORQUE_LIMIT, po::value<std::string>()->default_value(""), "Franka torque limits")(
+        OPT_FRANKA_CARTESIAN_LOWER, po::value<std::string>()->default_value(""), "Franka Cartesian lower limits")(
+        OPT_FRANKA_CARTESIAN_UPPER, po::value<std::string>()->default_value(""), "Franka Cartesian upper limits")(
+        OPT_FRANKA_SAFETY_SCALARS, po::value<std::string>()->default_value(""), "Franka safety margins and gains")(
+        OPT_ROBOTIQ_DEVICE, po::value<std::string>()->default_value(""),
+        "Robotiq serial device")(
+        OPT_ROBOTIQ_BAUD_RATE, po::value<int>()->default_value(115200), "Robotiq baud rate")(
+        OPT_ROBOTIQ_SLAVE_ID, po::value<int>()->default_value(9), "Robotiq Modbus slave ID")(
+        OPT_ROBOTIQ_POLL_FREQUENCY, po::value<int>()->default_value(50), "Robotiq polling frequency")(
+        OPT_ROBOTIQ_MIN_POSITION_RAW, po::value<int>()->default_value(3), "Robotiq open raw position")(
+        OPT_ROBOTIQ_MAX_POSITION_RAW, po::value<int>()->default_value(230), "Robotiq closed raw position")(
+        OPT_ROBOTIQ_DEFAULT_SPEED, po::value<float>()->default_value(1.0f), "Robotiq default normalized speed")(
+        OPT_ROBOTIQ_DEFAULT_FORCE, po::value<float>()->default_value(1.0f), "Robotiq default normalized force")(
         OPT_MOVE_TO_READY_VEL_RAD_S_NORMAL,
         po::value<float>()->default_value(MOVE_TO_READY_VEL_RAD_S_NORMAL),
         "Healthy move-to-ready angular speed (rad/s). Used by startup, command-driven "
@@ -224,7 +250,7 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         exit(2);
     }
 
-    if (device_type == OPT_DEVICE_TYPE_ARM) {
+    if (device_type == OPT_DEVICE_TYPE_ARM || device_type == OPT_DEVICE_TYPE_FRANKA) {
         device_config_type = DeviceConfigType::ARM;
     } else {
         PI_ERROR("Invalid device type: %s (only arms are supported)", device_type.c_str());
@@ -313,7 +339,7 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         control_port_name = vm[OPT_CONTROL_PORT].as<std::string>();
         PI_INFO("main()", InfoLevel::ESSENTIAL_0, "Control port name: %s",
                 control_port_name.c_str());
-    } else {
+    } else if (device_type != OPT_DEVICE_TYPE_FRANKA) {
         PI_ERROR("--%s is not set", OPT_CONTROL_PORT);
         exit(2);
     }
@@ -604,6 +630,26 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
                  OPT_PARENT_LIVENESS_FD, parent_liveness_fd);
         exit(2);
     }
+    franka_address = vm[OPT_FRANKA_ADDRESS].as<std::string>();
+    franka_realtime_config = vm[OPT_FRANKA_REALTIME_CONFIG].as<std::string>();
+    franka_read_only = vm[OPT_FRANKA_READ_ONLY].as<bool>();
+    franka_reset_pose = vm[OPT_FRANKA_RESET_POSE].as<std::string>();
+    libfranka_library = vm[OPT_LIBFRANKA_LIBRARY].as<std::string>();
+    franka_joint_lower = vm[OPT_FRANKA_JOINT_LOWER].as<std::string>();
+    franka_joint_upper = vm[OPT_FRANKA_JOINT_UPPER].as<std::string>();
+    franka_joint_velocity = vm[OPT_FRANKA_JOINT_VELOCITY].as<std::string>();
+    franka_torque_limit = vm[OPT_FRANKA_TORQUE_LIMIT].as<std::string>();
+    franka_cartesian_lower = vm[OPT_FRANKA_CARTESIAN_LOWER].as<std::string>();
+    franka_cartesian_upper = vm[OPT_FRANKA_CARTESIAN_UPPER].as<std::string>();
+    franka_safety_scalars = vm[OPT_FRANKA_SAFETY_SCALARS].as<std::string>();
+    robotiq_device = vm[OPT_ROBOTIQ_DEVICE].as<std::string>();
+    robotiq_baud_rate = vm[OPT_ROBOTIQ_BAUD_RATE].as<int>();
+    robotiq_slave_id = vm[OPT_ROBOTIQ_SLAVE_ID].as<int>();
+    robotiq_poll_frequency = vm[OPT_ROBOTIQ_POLL_FREQUENCY].as<int>();
+    robotiq_min_position_raw = vm[OPT_ROBOTIQ_MIN_POSITION_RAW].as<int>();
+    robotiq_max_position_raw = vm[OPT_ROBOTIQ_MAX_POSITION_RAW].as<int>();
+    robotiq_default_speed = vm[OPT_ROBOTIQ_DEFAULT_SPEED].as<float>();
+    robotiq_default_force = vm[OPT_ROBOTIQ_DEFAULT_FORCE].as<float>();
     if (!topic_live_command.empty()) {
         topic_joint = topic_live_command;
     }
@@ -616,8 +662,34 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         PI_ERROR("Standalone state/live/direct/lifecycle/status topics are all required");
         exit(2);
     }
-    if (arm_model_config.empty() || arm_instance_config.empty() || urdf_path.empty()) {
-        PI_ERROR("Explicit --arm_model_config, --arm_instance_config, and --urdf_path are required");
+    if (arm_model_config.empty() || arm_instance_config.empty() ||
+        (device_type != OPT_DEVICE_TYPE_FRANKA && urdf_path.empty())) {
+        PI_ERROR("Explicit arm model/instance configs and a non-Franka URDF are required");
+        exit(2);
+    }
+    if (device_type == OPT_DEVICE_TYPE_FRANKA &&
+        (franka_address.empty() || franka_reset_pose.empty() || franka_joint_lower.empty() ||
+         franka_joint_upper.empty() || franka_joint_velocity.empty() || franka_torque_limit.empty() ||
+         franka_cartesian_lower.empty() || franka_cartesian_upper.empty() || franka_safety_scalars.empty())) {
+        PI_ERROR("Franka devices require address, reset pose, and safety limits");
+        exit(2);
+    }
+    if (device_type == OPT_DEVICE_TYPE_FRANKA && role != Role::FOLLOWER) {
+        PI_ERROR("Franka is supported as a follower only");
+        exit(2);
+    }
+    if (device_type == OPT_DEVICE_TYPE_FRANKA && franka_realtime_config != "enforce" &&
+        franka_realtime_config != "ignore") {
+        PI_ERROR("Franka realtime config must be 'enforce' or 'ignore'");
+        exit(2);
+    }
+    if (!robotiq_device.empty() &&
+        (robotiq_baud_rate <= 0 || robotiq_poll_frequency <= 0 || robotiq_slave_id < 1 ||
+         robotiq_slave_id > 247 || robotiq_min_position_raw < 0 ||
+         robotiq_max_position_raw > 255 || robotiq_min_position_raw >= robotiq_max_position_raw ||
+         robotiq_default_speed < 0 || robotiq_default_speed > 1 || robotiq_default_force < 0 ||
+         robotiq_default_force > 1)) {
+        PI_ERROR("Invalid Robotiq serial, calibration, speed, or force configuration");
         exit(2);
     }
     if (!effector_model.empty() &&

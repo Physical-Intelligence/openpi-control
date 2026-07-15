@@ -7,6 +7,16 @@ endif()
 
 option(OPENPI_CONTROL_BUILD_NATIVE "Build the physical-arm native runtime" ON)
 option(OPENPI_CONTROL_BUILD_TESTING "Build the native unit tests" OFF)
+option(OPENPI_CONTROL_WITH_FRANKA "Build the libfranka hardware backend" OFF)
+option(OPENPI_CONTROL_WITH_MODBUS "Build the Robotiq libmodbus backend" OFF)
+option(OPENPI_CONTROL_MOCK_FRANKA "Build the synthetic Franka backend" OFF)
+option(OPENPI_CONTROL_MOCK_ROBOTIQ "Build the synthetic Robotiq backend" OFF)
+if(OPENPI_CONTROL_WITH_FRANKA AND OPENPI_CONTROL_MOCK_FRANKA)
+  message(FATAL_ERROR "Select either real or mock Franka support, not both")
+endif()
+if(OPENPI_CONTROL_WITH_MODBUS AND OPENPI_CONTROL_MOCK_ROBOTIQ)
+  message(FATAL_ERROR "Select either real or mock Robotiq support, not both")
+endif()
 
 # A source build keeps native dependencies private to this project.
 # `build_deps.sh` installs the pinned dependencies here, and this CMake

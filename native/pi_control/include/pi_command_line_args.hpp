@@ -11,6 +11,7 @@
 #define OPT_ROLE_FOLLOWER                         "follower"         ///< Follower role value.
 #define OPT_DEVICE_TYPE                           "device_type"      ///< Device type option.
 #define OPT_DEVICE_TYPE_ARM                       "arms"             ///< Arm device type value.
+#define OPT_DEVICE_TYPE_FRANKA                    "franka"
 #define OPT_DEVICE_MODEL                          "device_model"     ///< Device model option.
 #define OPT_DEVICE_ID                             "device_id"        ///< Device ID option.
 #define OPT_LOGICAL_NAME                          "logical_name"     ///< Session-unique logical process identity.
@@ -74,6 +75,26 @@
 #define OPT_URDF_PATH                             "urdf_path"
 // Read end of the supervising Python process's lifeline pipe.
 #define OPT_PARENT_LIVENESS_FD                    "parent_liveness_fd"
+#define OPT_FRANKA_ADDRESS                        "franka_address"
+#define OPT_FRANKA_REALTIME_CONFIG                "franka_realtime_config"
+#define OPT_FRANKA_READ_ONLY                      "franka_read_only"
+#define OPT_FRANKA_RESET_POSE                     "franka_reset_pose"
+#define OPT_LIBFRANKA_LIBRARY                     "libfranka_library"
+#define OPT_FRANKA_JOINT_LOWER                    "franka_joint_lower"
+#define OPT_FRANKA_JOINT_UPPER                    "franka_joint_upper"
+#define OPT_FRANKA_JOINT_VELOCITY                 "franka_joint_velocity"
+#define OPT_FRANKA_TORQUE_LIMIT                   "franka_torque_limit"
+#define OPT_FRANKA_CARTESIAN_LOWER                "franka_cartesian_lower"
+#define OPT_FRANKA_CARTESIAN_UPPER                "franka_cartesian_upper"
+#define OPT_FRANKA_SAFETY_SCALARS                 "franka_safety_scalars"
+#define OPT_ROBOTIQ_DEVICE                        "robotiq_device"
+#define OPT_ROBOTIQ_BAUD_RATE                     "robotiq_baud_rate"
+#define OPT_ROBOTIQ_SLAVE_ID                      "robotiq_slave_id"
+#define OPT_ROBOTIQ_POLL_FREQUENCY                "robotiq_poll_frequency"
+#define OPT_ROBOTIQ_MIN_POSITION_RAW              "robotiq_min_position_raw"
+#define OPT_ROBOTIQ_MAX_POSITION_RAW              "robotiq_max_position_raw"
+#define OPT_ROBOTIQ_DEFAULT_SPEED                 "robotiq_default_speed"
+#define OPT_ROBOTIQ_DEFAULT_FORCE                 "robotiq_default_force"
 
 
 // Unified move-to-ready / emergency-recovery options. Every "move to ready" path (startup,
@@ -153,6 +174,26 @@ class CommandLineArgs {
     std::string effector_instance_config;
     std::string urdf_path;
     int parent_liveness_fd = -1;  ///< Inherited lifeline pipe; EOF means the Python owner exited.
+    std::string franka_address;
+    std::string franka_realtime_config;
+    bool franka_read_only = false;
+    std::string franka_reset_pose;
+    std::string libfranka_library;
+    std::string franka_joint_lower;
+    std::string franka_joint_upper;
+    std::string franka_joint_velocity;
+    std::string franka_torque_limit;
+    std::string franka_cartesian_lower;
+    std::string franka_cartesian_upper;
+    std::string franka_safety_scalars;
+    std::string robotiq_device;
+    int robotiq_baud_rate = 115200;
+    int robotiq_slave_id = 9;
+    int robotiq_poll_frequency = 50;
+    int robotiq_min_position_raw = 3;
+    int robotiq_max_position_raw = 230;
+    float robotiq_default_speed = 1.0f;
+    float robotiq_default_force = 1.0f;
 
     // Unified move-to-ready / emergency-recovery options. See macros above for descriptions.
     float move_to_ready_vel_rad_s_normal; ///< Healthy move-to-ready angular speed (rad/s).

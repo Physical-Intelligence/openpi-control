@@ -333,12 +333,19 @@ ReturnCode TopicZmq::step() {
     }
 
     if (sub_direct_joint_) {
+        ZmqDroidCommand latest_droid{};
         ZmqJointInfo latest_direct{};
+        void* payload = p_device_->uses_droid_protocol() ? static_cast<void*>(&latest_droid)
+                                                        : static_cast<void*>(&latest_direct);
+        const size_t payload_size = p_device_->uses_droid_protocol() ? sizeof(latest_droid)
+                                                                     : sizeof(latest_direct);
         const DrainResult drain_result =
-            drain_sub_to_latest(sub_direct_joint_, topic_direct_command_, &latest_direct, sizeof(latest_direct));
+            drain_sub_to_latest(sub_direct_joint_, topic_direct_command_, payload, payload_size);
         record_result(drain_result.first_error);
         if (drain_result.have_payload) {
-            record_result(process_leader_msg_joint(&latest_direct, true));
+            record_result(p_device_->uses_droid_protocol()
+                              ? process_direct_msg_droid(latest_droid)
+                              : process_leader_msg_joint(&latest_direct, true));
         }
     }
 
@@ -464,6 +471,59 @@ ReturnCode TopicZmq::publish(const MsgJoints& msg) {
     }
 
     return Topic::publish(msg);
+}
+
+ReturnCode TopicZmq::process_direct_msg_droid(const ZmqDroidCommand& wire) {
+    if (std::memcmp(wire.magic, "DRD1", 4) != 0 ||
+        wire.version_major != PI_CONTROL_PROTOCOL_VERSION_MAJOR ||
+        wire.version_minor != PI_CONTROL_PROTOCOL_VERSION_MINOR) {
+        PI_ERROR("Invalid DROID command header");
+        return ReturnCode::INVALID_PARAM;
+    }
+    if (wire.control_mode > static_cast<uint8_t>(DroidControlMode::JOINT_VELOCITY)) {
+        return ReturnCode::INVALID_PARAM;
+    }
+    MsgDroidCommand msg;
+    msg.sequence = wire.sequence;
+    msg.monotonic_ns = wire.monotonic_ns;
+    msg.mode = static_cast<DroidControlMode>(wire.control_mode);
+    std::copy_n(wire.joint_position, 7, msg.joint_position.begin());
+    std::copy_n(wire.joint_velocity, 7, msg.joint_velocity.begin());
+    msg.gripper_position = wire.gripper_position;
+    msg.gripper_speed = wire.gripper_speed;
+    msg.gripper_force = wire.gripper_force;
+    return p_device_->dispatch_direct_action(msg);
+}
+
+ReturnCode TopicZmq::publish(const MsgDroidState& msg) {
+    ZmqDroidState wire{};
+    std::memcpy(wire.magic, "DRD1", 4);
+    wire.version_major = PI_CONTROL_PROTOCOL_VERSION_MAJOR;
+    wire.version_minor = PI_CONTROL_PROTOCOL_VERSION_MINOR;
+    wire.flags = msg.flags;
+    wire.sequence = msg.sequence;
+    wire.monotonic_ns = msg.monotonic_ns;
+    wire.hardware_timestamp_s = msg.hardware_timestamp_s;
+    std::copy(msg.joint_position.begin(), msg.joint_position.end(), wire.joint_position);
+    std::copy(msg.joint_velocity.begin(), msg.joint_velocity.end(), wire.joint_velocity);
+    std::copy(msg.joint_effort.begin(), msg.joint_effort.end(), wire.joint_effort);
+    std::copy(msg.commanded_joint_position.begin(), msg.commanded_joint_position.end(),
+              wire.commanded_joint_position);
+    std::copy(msg.external_joint_torque.begin(), msg.external_joint_torque.end(),
+              wire.external_joint_torque);
+    std::copy(msg.cartesian_wrench.begin(), msg.cartesian_wrench.end(), wire.cartesian_wrench);
+    std::copy(msg.gripper.begin(), msg.gripper.end(), wire.gripper);
+    wire.robot_mode = msg.robot_mode;
+    wire.joint_contact_bits = msg.joint_contact_bits;
+    wire.joint_collision_bits = msg.joint_collision_bits;
+    wire.control_command_success_rate = msg.control_command_success_rate;
+
+    zmq::message_t topic(topic_state_.data(), topic_state_.size());
+    zmq::message_t payload(&wire, sizeof(wire));
+    pub_follower_joint_.send(topic, zmq::send_flags::sndmore);
+    pub_follower_joint_.send(payload, zmq::send_flags::dontwait);
+    ++msg_id_generation_;
+    return ReturnCode::SUCCESS;
 }
 
 ReturnCode TopicZmq::publish(const MsgDeviceInfo& msg) {

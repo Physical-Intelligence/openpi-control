@@ -95,7 +95,8 @@ ReturnCode Topic::process_leader_msg(const MsgCommand& msg) {
     //                                            followed by topic shutdown.
     if (p_device_ != nullptr && p_device_->is_in_emergency_recovery() &&
         msg.command_ != DEVICE_COMMAND_STOP &&
-        msg.command_ != DEVICE_COMMAND_MOVE_TO_READY_AND_STOP) {
+        msg.command_ != DEVICE_COMMAND_MOVE_TO_READY_AND_STOP &&
+        msg.command_ != DEVICE_COMMAND_RECOVER) {
         PI_WARN("Topic: dropping command %d while %s_%s is in emergency recovery",
                 msg.command_, p_device_->get_model().c_str(), p_device_->get_id().c_str());
         return ReturnCode::BUSY;
@@ -216,6 +217,16 @@ ReturnCode Topic::process_leader_msg(const MsgCommand& msg) {
                                         msg.param_float_.begin() + msg.num_param_float_);
         return p_device_->set_runtime_torq_rescale(values);
 
+    } else if (msg.command_ == DEVICE_COMMAND_ACTIVATE_EFFECTOR) {
+        return p_device_ != nullptr ? p_device_->activate_effector() : ReturnCode::NOT_INITIALIZED;
+
+    } else if (msg.command_ == DEVICE_COMMAND_RECOVER) {
+        return p_device_ != nullptr ? p_device_->recover() : ReturnCode::NOT_INITIALIZED;
+
+    } else if (msg.command_ == DEVICE_COMMAND_RESUME_DIRECT_COMMANDS) {
+        return p_device_ != nullptr ? p_device_->resume_direct_commands()
+                                    : ReturnCode::NOT_INITIALIZED;
+
     } else if (msg.command_ == DEVICE_COMMAND_SET_EFFECTOR_MIN_MAX_POS) {
         int num_param_float = msg.num_param_float_;
         if (num_param_float != 2) {
@@ -301,10 +312,7 @@ ReturnCode Topic::process_direct_msg(const MsgJoints& msg) {
     if (p_device_->get_device_role() != Role::FOLLOWER) {
         return ReturnCode::NOT_SUPPORTED;
     }
-    if (p_device_->rejects_direct_commands()) {
-        return ReturnCode::BUSY;
-    }
-    return p_device_->apply_action(msg);
+    return p_device_->dispatch_direct_action(msg);
 }
 
 ReturnCode Topic::process_leader_msg(const MsgJoystick& msg) {

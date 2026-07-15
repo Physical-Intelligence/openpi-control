@@ -204,9 +204,11 @@ int main(int argc, char** argv) {
             PI_ERROR("Failed to arm communication-loss protection: error code=%d", return_code);
         }
 
-        int capability_flags = PI_CONTROL_CAP_MOVE_TO_READY;
+        int capability_flags = cla.franka_read_only ? 0 : PI_CONTROL_CAP_MOVE_TO_READY;
         if (cla.role == Role::FOLLOWER) {
-            capability_flags |= PI_CONTROL_CAP_DIRECT_COMMAND | PI_CONTROL_CAP_LIVE_INPUT;
+            if (!cla.franka_read_only) {
+                capability_flags |= PI_CONTROL_CAP_DIRECT_COMMAND | PI_CONTROL_CAP_LIVE_INPUT;
+            }
         } else if (p_device->is_read_only()) {
             // Read-only leader (passive encoders, e.g. ARX_ENC): cannot produce torque,
             // so gravity compensation and force feedback are not available. The arm
@@ -214,6 +216,14 @@ int main(int argc, char** argv) {
             // harmless no-op (the device marks itself ready immediately).
         } else {
             capability_flags |= PI_CONTROL_CAP_GRAVITY_COMP | PI_CONTROL_CAP_FORCE_FEEDBACK;
+        }
+        if (cla.device_type == OPT_DEVICE_TYPE_FRANKA) {
+            if (!cla.franka_read_only) capability_flags |= PI_CONTROL_CAP_VELOCITY_COMMAND;
+            if (!cla.franka_read_only) capability_flags |= PI_CONTROL_CAP_RECOVERY;
+            if (!cla.robotiq_device.empty()) {
+                capability_flags |= PI_CONTROL_CAP_EFFECTOR_ACTIVATION |
+                                    PI_CONTROL_CAP_EFFECTOR_FORCE;
+            }
         }
         std::vector<int> handshake_data{
             PI_CONTROL_PROTOCOL_VERSION_MAJOR,

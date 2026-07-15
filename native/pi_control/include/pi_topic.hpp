@@ -36,7 +36,7 @@
 #define DEVICE_COMMAND_SET_TORQ_RESCALE            35  ///< Runtime per-joint torq_rescale update (float params, one per arm joint).
 #define DEVICE_COMMAND_ACTIVATE_EFFECTOR           36
 #define DEVICE_COMMAND_RECOVER                     37
-#define DEVICE_COMMAND_RESUME_DIRECT_COMMANDS      38
+#define DEVICE_COMMAND_RESUME_DIRECT_COMMANDS      38  ///< Explicitly release a runtime hold latch.
 
 #define DEVICE_INFO_READY_NOW 1  ///< Device is ready; param_int[0] is the completed lifecycle request id, if any.
 #define DEVICE_INFO_EFFECTOR  10 ///< Device info code indicating that the device is an effector.
@@ -86,7 +86,7 @@
 #define PI_CONTROL_CAP_EFFECTOR_ACTIVATION  (1 << 5)
 #define PI_CONTROL_CAP_RECOVERY             (1 << 6)
 #define PI_CONTROL_CAP_EFFECTOR_FORCE       (1 << 7)
-#define PI_CONTROL_CAP_FRANKA               (1 << 8)
+#define PI_CONTROL_CAP_VELOCITY_COMMAND     (1 << 8)
 
 // Source enum for DEVICE_INFO_READY_MOVE_IN_PROGRESS param_int[0]. Concrete devices pass
 // these via Device::publish_ready_move_progress() so Python can distinguish startup vs

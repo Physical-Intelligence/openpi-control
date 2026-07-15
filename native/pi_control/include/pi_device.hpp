@@ -126,6 +126,8 @@ class Device {
         (void)msg;
         return ReturnCode::NOT_SUPPORTED;
     }
+    ReturnCode dispatch_direct_action(const MsgJoints& msg);
+    ReturnCode dispatch_direct_action(const MsgDroidCommand& msg);
     virtual ReturnCode activate_effector() { return ReturnCode::NOT_SUPPORTED; }
     virtual ReturnCode recover() { return ReturnCode::NOT_SUPPORTED; }
 
@@ -697,6 +699,14 @@ class Device {
 
     virtual ReturnCode runtime_hold();
 
+    /**
+     * @brief Explicitly releases the direct-command hold latch.
+     *
+     * A successful runtime_hold() remains authoritative until this method is
+     * called. Direct commands can never release the latch themselves.
+     */
+    virtual ReturnCode resume_direct_commands();
+
     /*!
      * @brief Records a client-liveness heartbeat (DEVICE_COMMAND_HEARTBEAT).
      *
@@ -713,7 +723,7 @@ class Device {
 
     bool rejects_direct_commands() const {
         std::lock_guard<std::mutex> lock(emergency_mutex_);
-        return emergency_state_ != EmergencyRecoveryState::NONE ||
+        return direct_commands_paused_ || emergency_state_ != EmergencyRecoveryState::NONE ||
                move_to_ready_cmd_state_ != MoveToReadyCmdState::IDLE;
     }
 
@@ -890,6 +900,7 @@ class Device {
     // Emergency recovery state machine. Accessed from the main step() thread and from
     // the Topic ZMQ command callback thread, so the fields are guarded by emergency_mutex_.
     mutable std::mutex emergency_mutex_;  ///< Guards all emergency_* / failed_joint_ids_ members.
+    bool direct_commands_paused_ = false;  ///< Latched by runtime_hold(); cleared only by explicit resume.
     EmergencyRecoveryState emergency_state_ = EmergencyRecoveryState::NONE;
     bool slow_move_active_ = false;       ///< When true, ready_move_step_rad() returns the ERROR-speed step size.
     int emergency_cause_ = 0;             ///< ReturnCode value (as int) recorded at trigger time.

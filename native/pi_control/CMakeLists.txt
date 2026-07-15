@@ -36,6 +36,26 @@ find_package(PkgConfig REQUIRED)
 find_package(Eigen3 REQUIRED)
 pkg_check_modules(PC_ZMQ REQUIRED libzmq)
 pkg_check_modules(PINOCCHIO REQUIRED pinocchio)
+if(OPENPI_CONTROL_WITH_FRANKA)
+  find_package(Franka 0.10 REQUIRED)
+  if(DEFINED Franka_VERSION AND NOT Franka_VERSION STREQUAL "")
+    set(OPENPI_CONTROL_FRANKA_VERSION "${Franka_VERSION}")
+  elseif(DEFINED Franka_VERSION_STRING AND NOT Franka_VERSION_STRING STREQUAL "")
+    set(OPENPI_CONTROL_FRANKA_VERSION "${Franka_VERSION_STRING}")
+  else()
+    message(FATAL_ERROR
+      "Unable to verify libfranka compatibility because Franka_VERSION is unavailable; "
+      "DROID requires robot-server protocol 6 (libfranka >=0.10.0 and <0.13.3)")
+  endif()
+  if(OPENPI_CONTROL_FRANKA_VERSION VERSION_GREATER_EQUAL 0.13.3)
+    message(FATAL_ERROR
+      "DROID robot-server protocol 6 requires libfranka >=0.10.0 and <0.13.3; "
+      "found ${OPENPI_CONTROL_FRANKA_VERSION}")
+  endif()
+endif()
+if(OPENPI_CONTROL_WITH_MODBUS)
+  pkg_check_modules(MODBUS REQUIRED libmodbus)
+endif()
 
 # Trossen iNerve controller SDK (DriverTrossen). Provisioned by
 # scripts/build_deps.sh from the pinned TrossenRobotics/trossen_arm release
@@ -57,6 +77,7 @@ include_directories(
   ${PC_ZMQ_INCLUDE_DIRS}
   ${OPENPI_CONTROL_CPPZMQ_INCLUDE_DIR}
   ${PINOCCHIO_INCLUDE_DIRS}
+  ${MODBUS_INCLUDE_DIRS}
 )
 
 # pkg-config gives -L in *_LIBRARY_DIRS; plain -l flags in target_link_libraries need those dirs here.
@@ -86,6 +107,9 @@ set(COMMON_SOURCES
   src/pi_driver_serial.cpp
   src/pi_driver_ft.cpp
   src/pi_servo_ft.cpp
+  src/pi_driver_franka.cpp
+  src/pi_franka_controller.cpp
+  src/pi_robotiq.cpp
   src/pi_joint.cpp
   src/pi_servo.cpp
   src/pi_servo_controller.cpp
@@ -100,6 +124,8 @@ set(COMMON_SOURCES
   src/pi_device_effector_can.cpp
   src/pi_device_effector_controller.cpp
   src/pi_device_effector_serial.cpp
+  src/pi_device_franka.cpp
+  src/pi_device_robotiq.cpp
   src/pi_device_config.cpp
   src/pi_algo.cpp
   src/pi_algo_pino.cpp
@@ -132,11 +158,26 @@ target_link_options(pi_trossen_shim PRIVATE "LINKER:--exclude-libs,ALL")
 
 add_executable(${OPENPI_CONTROL_TARGET} ${COMMON_SOURCES})
 
+if(OPENPI_CONTROL_WITH_FRANKA)
+  target_compile_definitions(${OPENPI_CONTROL_TARGET} PRIVATE OPENPI_CONTROL_WITH_FRANKA)
+endif()
+if(OPENPI_CONTROL_WITH_MODBUS)
+  target_compile_definitions(${OPENPI_CONTROL_TARGET} PRIVATE OPENPI_CONTROL_WITH_MODBUS)
+endif()
+if(OPENPI_CONTROL_MOCK_FRANKA)
+  target_compile_definitions(${OPENPI_CONTROL_TARGET} PRIVATE OPENPI_CONTROL_MOCK_FRANKA)
+endif()
+if(OPENPI_CONTROL_MOCK_ROBOTIQ)
+  target_compile_definitions(${OPENPI_CONTROL_TARGET} PRIVATE OPENPI_CONTROL_MOCK_ROBOTIQ)
+endif()
+
 target_link_libraries(${OPENPI_CONTROL_TARGET}
   ${PC_ZMQ_LDFLAGS}
   ${PINOCCHIO_LDFLAGS}
   Boost::program_options
   pi_trossen_shim
+  $<$<BOOL:${OPENPI_CONTROL_WITH_FRANKA}>:Franka::Franka>
+  ${MODBUS_LDFLAGS}
 )
 
 # Use a transitive DT_RPATH instead of DT_RUNPATH. Libraries copied beside the
@@ -167,6 +208,8 @@ if(OPENPI_CONTROL_BUILD_TESTING)
     ${PINOCCHIO_LDFLAGS}
     Boost::program_options
     pi_trossen_shim
+    $<$<BOOL:${OPENPI_CONTROL_WITH_FRANKA}>:Franka::Franka>
+    ${MODBUS_LDFLAGS}
   )
   gtest_discover_tests(
     pi_topic_zmq_tests

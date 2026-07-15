@@ -10,6 +10,7 @@
 #include "pi_driver_arx_encoder.hpp"
 #include "pi_driver_ft.hpp"
 #include "pi_driver_trossen.hpp"
+#include "pi_driver_franka.hpp"
 #include "pi_servo.hpp"
 
 Driver::Driver(Device* p_device, const CommandLineArgs& cla) {
@@ -56,6 +57,9 @@ std::shared_ptr<Driver> Driver::new_driver(Device* p_device, const DeviceConfig*
         p_driver = std::make_shared<DriverFt>(p_device, cla);
         PI_INFO("Driver", InfoLevel::HELPFUL_1, "Created FeeTech driver (DriverFt)");
 
+    } else if (driver_type == "Franka") {
+        p_driver = std::make_shared<DriverFranka>(p_device, cla);
+        PI_INFO("Driver", InfoLevel::HELPFUL_1, "Created DriverFranka");
     } else {
         PI_ERROR("Unsupported driver type: '%s' (supported types: CAN, CAN_ENCODER, TROSSEN_ETHERNET, FEETECH)",
                  driver_type.c_str());

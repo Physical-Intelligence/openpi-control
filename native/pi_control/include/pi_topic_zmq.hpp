@@ -49,6 +49,44 @@ class ZmqCommand {
     int32_t param_int[10];    ///< Array of integer parameters.
 };
 
+#pragma pack(push, 1)
+struct ZmqDroidCommand {
+    char magic[4];
+    uint8_t version_major;
+    uint8_t version_minor;
+    uint8_t control_mode;
+    uint8_t flags;
+    uint64_t sequence;
+    uint64_t monotonic_ns;
+    float joint_position[7];
+    float joint_velocity[7];
+    float gripper_position;
+    float gripper_speed;
+    float gripper_force;
+};
+
+struct ZmqDroidState {
+    char magic[4];
+    uint8_t version_major;
+    uint8_t version_minor;
+    uint16_t flags;
+    uint64_t sequence;
+    uint64_t monotonic_ns;
+    double hardware_timestamp_s;
+    float joint_position[7];
+    float joint_velocity[7];
+    float joint_effort[7];
+    float commanded_joint_position[7];
+    float external_joint_torque[7];
+    float cartesian_wrench[6];
+    float gripper[6];
+    int32_t robot_mode;
+    uint16_t joint_contact_bits;
+    uint16_t joint_collision_bits;
+    float control_command_success_rate;
+};
+#pragma pack(pop)
+
 /*!
  * @brief ZMQ message structure for device status and configuration information.
  */
@@ -73,6 +111,8 @@ class ZmqEffectorInfo {
 static_assert(sizeof(ZmqJointInfo) == 252, "ZmqJointInfo ABI changed");
 static_assert(sizeof(ZmqCommand) == 88, "ZmqCommand ABI changed");
 static_assert(sizeof(ZmqDeviceInfo) == 88, "ZmqDeviceInfo ABI changed");
+static_assert(sizeof(ZmqDroidCommand) == 92, "ZmqDroidCommand ABI changed");
+static_assert(sizeof(ZmqDroidState) == 232, "ZmqDroidState ABI changed");
 
 /*!
  * @brief ZMQ message structure for joystick input data.
@@ -179,6 +219,7 @@ class TopicZmq : public Topic {
      * @return ReturnCode::SUCCESS if successful, otherwise an error code.
      */
     ReturnCode publish(const MsgJoints& msg) override;
+    ReturnCode publish(const MsgDroidState& msg) override;
 
     /*!
      * @brief Publishes device status and configuration information.
@@ -218,6 +259,7 @@ class TopicZmq : public Topic {
      * @return ReturnCode::SUCCESS if successful, otherwise an error code.
      */
     ReturnCode process_leader_msg_joint(ZmqJointInfo* p_zmq_msg, bool direct = false);
+    ReturnCode process_direct_msg_droid(const ZmqDroidCommand& msg);
 
     /*!
      * @brief Processes a received joystick input message.
