@@ -9,7 +9,9 @@ sanitizer build via the env override.
 from __future__ import annotations
 
 import os
+import select
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -198,6 +200,93 @@ def test_killed_node_surfaces_as_native_process_error(fake_bus, session_factory)
                 except StateTimeoutError:
                     pass  # death detection may lag one read
                 time.sleep(0.1)
+
+
+def test_native_node_gracefully_stops_when_python_parent_dies(fake_bus, tmp_path):
+    """Exercise the real inherited-FD lifeline across an abrupt Python exit."""
+    native_pid_file = tmp_path / "native-pid"
+    client_script = """
+import sys
+import time
+from pathlib import Path
+
+from openpi_control import ArmConfig, ArmSession, SocketCanConnection
+
+session = ArmSession()
+follower = session.add_follower(
+    ArmConfig(
+        "sil-parent-liveness-follower",
+        "Yam",
+        SocketCanConnection(sys.argv[1]),
+        control_frequency_hz=100,
+    )
+)
+session.connect()
+follower.read_state(timeout_s=10.0)
+Path(sys.argv[2]).write_text(str(follower._backend._process.pid))
+while True:
+    time.sleep(60)
+"""
+    client = subprocess.Popen(
+        [sys.executable, "-c", client_script, VCAN, str(native_pid_file)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    native_pid: int | None = None
+    native_pidfd: int | None = None
+    try:
+        def client_is_connected() -> bool:
+            if native_pid_file.exists():
+                return True
+            if client.poll() is not None:
+                output = client.stdout.read() if client.stdout is not None else ""
+                raise AssertionError(f"client exited before connecting:\n{output}")
+            return False
+
+        wait_for(client_is_connected, timeout_s=20.0, what="client and native node to connect")
+        native_pid = int(native_pid_file.read_text())
+        native_pidfd = os.pidfd_open(native_pid)
+
+        # The native node must not share the terminal-facing Python process's
+        # session, while its inherited pipe must still tie its lifetime to Python.
+        assert os.getsid(native_pid) == native_pid
+        disable_counts = {
+            motor_id: fake_bus.motor_disable_count(motor_id) for motor_id in range(1, 7)
+        }
+
+        os.kill(client.pid, signal.SIGKILL)
+        client.wait(timeout=5.0)
+
+        poller = select.poll()
+        poller.register(native_pidfd, select.POLLIN)
+        assert poller.poll(10_000), "native node survived its Python parent's death"
+        wait_for(
+            lambda: all(
+                fake_bus.motor_disable_count(motor_id) > disable_counts[motor_id]
+                for motor_id in range(1, 7)
+            ),
+            timeout_s=3.0,
+            what="graceful native shutdown to disable every motor",
+        )
+    finally:
+        if client.poll() is None:
+            client.kill()
+            client.wait(timeout=5.0)
+        if client.stdout is not None:
+            client.stdout.close()
+        if native_pidfd is not None:
+            try:
+                signal.pidfd_send_signal(native_pidfd, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            os.close(native_pidfd)
+        elif native_pid is not None:
+            try:
+                os.kill(native_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_connect_is_passive_and_explicit_homing_still_works(fake_bus, session_factory):

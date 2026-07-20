@@ -172,6 +172,7 @@ class NativeArmBackend(ArmBackend):
     def __init__(self) -> None:
         self._context = zmq.Context()
         self._process: subprocess.Popen[str] | None = None
+        self._parent_liveness_write_fd: int | None = None
         self._config: ArmConfig | None = None
         self._role: ArmRole | None = None
         self._topics: ArmTopics | None = None
@@ -225,6 +226,7 @@ class NativeArmBackend(ArmBackend):
         self.close()
         with self._condition:
             self._process = None
+            self._parent_liveness_write_fd = None
             self._state_sub = None
             self._status_sub = None
             self._inputs_sub = None
@@ -361,13 +363,24 @@ class NativeArmBackend(ArmBackend):
                     str(assets.effector_instance_config),
                 ]
             )
-        self._process = subprocess.Popen(
-            args,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
+        parent_liveness_read_fd, parent_liveness_write_fd = os.pipe()
+        self._parent_liveness_write_fd = parent_liveness_write_fd
+        args.extend(["--parent_liveness_fd", str(parent_liveness_read_fd)])
+        try:
+            self._process = subprocess.Popen(
+                args,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                pass_fds=(parent_liveness_read_fd,),
+                # Terminal-generated signals target the foreground process
+                # group. Give the supervised node its own session so Python
+                # alone handles Ctrl+C and chooses the shutdown behavior.
+                start_new_session=True,
+            )
+        finally:
+            os.close(parent_liveness_read_fd)
         self._log_reader = threading.Thread(target=self._drain_process_log, daemon=True)
         self._log_reader.start()
         self._running = True
@@ -906,6 +919,13 @@ class NativeArmBackend(ArmBackend):
                     cleanup_errors.append(exc)
             except Exception as exc:  # noqa: BLE001 - finish retiring owned resources
                 cleanup_errors.append(exc)
+        if self._parent_liveness_write_fd is not None:
+            try:
+                os.close(self._parent_liveness_write_fd)
+            except OSError as exc:
+                cleanup_errors.append(exc)
+            finally:
+                self._parent_liveness_write_fd = None
         with self._condition:
             self._running = False
             self._condition.notify_all()

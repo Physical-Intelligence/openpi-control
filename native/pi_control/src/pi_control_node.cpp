@@ -4,12 +4,17 @@
  */
 
 #include <algorithm>
+#include <atomic>
 #include <boost/program_options.hpp>
+#include <cerrno>
 #include <csignal>
 #include <iostream>
 #include <memory>
+#include <poll.h>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include "pi_command_line_args.hpp"
@@ -25,17 +30,98 @@ void pi_control_signal_handler(int signum) {
     g_terminate_signal_received = signum;
 }
 
+namespace {
+
+class ParentLivenessMonitor {
+   public:
+    ParentLivenessMonitor() = default;
+    ParentLivenessMonitor(const ParentLivenessMonitor&) = delete;
+    ParentLivenessMonitor& operator=(const ParentLivenessMonitor&) = delete;
+
+    ~ParentLivenessMonitor() { stop(); }
+
+    void start(int fd) {
+        if (fd < 0) {
+            return;
+        }
+        fd_ = fd;
+        thread_ = std::thread([this] { monitor(); });
+    }
+
+    void stop() {
+        stop_requested_.store(true);
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+        if (fd_ >= 0) {
+            close(fd_);
+            fd_ = -1;
+        }
+    }
+
+   private:
+    void request_graceful_shutdown() const {
+        if (!stop_requested_.load()) {
+            // Deliver the same signal as Popen.terminate(). The existing
+            // handler leaves device teardown on the main control thread.
+            (void)kill(getpid(), SIGTERM);
+        }
+    }
+
+    void monitor() {
+        pollfd descriptor{fd_, POLLIN, 0};
+        while (!stop_requested_.load()) {
+            descriptor.revents = 0;
+            const int result = poll(&descriptor, 1, 100);
+            if (result == 0) {
+                continue;
+            }
+            if (result < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                request_graceful_shutdown();
+                return;
+            }
+            if ((descriptor.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
+                request_graceful_shutdown();
+                return;
+            }
+            if ((descriptor.revents & POLLIN) != 0) {
+                char byte = 0;
+                const ssize_t bytes_read = read(fd_, &byte, sizeof(byte));
+                if (bytes_read == 0 || (bytes_read < 0 && errno != EINTR)) {
+                    request_graceful_shutdown();
+                    return;
+                }
+            }
+        }
+    }
+
+    int fd_ = -1;
+    std::atomic<bool> stop_requested_{false};
+    std::thread thread_;
+};
+
+}  // namespace
+
 int main(int argc, char** argv) {
     std::signal(SIGINT, pi_control_signal_handler);
     std::signal(SIGHUP, pi_control_signal_handler);
     std::signal(SIGTERM, pi_control_signal_handler);
+    // Python owns the read end of stdout. If it exits abruptly, logging during
+    // parent-death cleanup must see EPIPE instead of terminating the node before
+    // p_device->stop() runs.
+    std::signal(SIGPIPE, SIG_IGN);
 
     // Own the device instance for the entire scope of main (including catch
     // blocks).
     std::unique_ptr<Device> p_device;
+    ParentLivenessMonitor parent_liveness_monitor;
 
     try {
         CommandLineArgs cla(argc, argv);
+        parent_liveness_monitor.start(cla.parent_liveness_fd);
 
         g_info_manager.set_info_level((InfoLevel)cla.info_level);
         g_info_manager.add_groups(cla.info_groups, ',');

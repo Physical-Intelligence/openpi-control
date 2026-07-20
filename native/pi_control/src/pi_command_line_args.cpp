@@ -127,6 +127,8 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         "Explicit effector instance JSON path")(
         OPT_URDF_PATH, po::value<std::string>()->default_value(""),
         "Explicit URDF path")(
+        OPT_PARENT_LIVENESS_FD, po::value<int>()->default_value(-1),
+        "Inherited read end of the supervising process's liveness pipe")(
         OPT_MOVE_TO_READY_VEL_RAD_S_NORMAL,
         po::value<float>()->default_value(MOVE_TO_READY_VEL_RAD_S_NORMAL),
         "Healthy move-to-ready angular speed (rad/s). Used by startup, command-driven "
@@ -532,6 +534,12 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
     effector_model_config = vm[OPT_EFFECTOR_MODEL_CONFIG].as<std::string>();
     effector_instance_config = vm[OPT_EFFECTOR_INSTANCE_CONFIG].as<std::string>();
     urdf_path = vm[OPT_URDF_PATH].as<std::string>();
+    parent_liveness_fd = vm[OPT_PARENT_LIVENESS_FD].as<int>();
+    if (parent_liveness_fd < -1) {
+        PI_ERROR("--%s=%d must be -1 or a nonnegative file descriptor",
+                 OPT_PARENT_LIVENESS_FD, parent_liveness_fd);
+        exit(2);
+    }
     if (!topic_live_command.empty()) {
         topic_joint = topic_live_command;
     }
