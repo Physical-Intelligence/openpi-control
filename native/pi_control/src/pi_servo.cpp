@@ -359,7 +359,8 @@ ReturnCode Servo::new_servos(const json& joint_config,
         std::unique_ptr<Servo> p_servo;
         if (servo_model == p_config_model->val_servo_model_dm_4340 ||
             servo_model == p_config_model->val_servo_model_dm_4310 ||
-            servo_model == p_config_model->val_servo_model_encos_A4310) {
+            servo_model == p_config_model->val_servo_model_encos_A4310 ||
+            servo_model == p_config_model->val_servo_model_arx_encoder) {
             p_servo = std::make_unique<ServoDm>(p_device, p_joint, p_driver);
             PI_INFO("Servo", InfoLevel::HELPFUL_1, "Created ServoDm instance");
 

@@ -104,6 +104,24 @@
 // to the policy but never trip the 10 s dead detector.
 #define ARX_STALL_WARN_AGE_MS                     250                  ///< Frame age (ms) that triggers the warn-only stall log.
 
+// ARX read-only joint encoder (DriverArxEncoder) CAN feedback decoding.
+// Per the ARX encoder CAN protocol: each joint encoder broadcasts a fixed 2-byte
+// mechanical angle at 200 Hz. raw = (data[0] << 8) | data[1], covering 0..16384
+// mapped linearly onto -360..+360 deg, with 8192 the zero point. Therefore
+//   rad = (raw - ARX_ENCODER_ZERO_RAW) * PI / ARX_ENCODER_RAD_DIVISOR
+// where 16384 counts span 720 deg (4*PI rad) so PI/4096 rad per count.
+#define ARX_ENCODER_FEEDBACK_DLC                  2                    ///< Encoder feedback frame payload length (bytes).
+#define ARX_ENCODER_FULL_RAW                      16384                ///< Raw count spanning the full -360..+360 deg range.
+#define ARX_ENCODER_ZERO_RAW                      8192                 ///< Raw count corresponding to 0 rad.
+#define ARX_ENCODER_RAD_DIVISOR                   4096.0f              ///< Counts per PI rad (16384 counts / 4*PI rad).
+
+// The encoder free-runs at 200 Hz with no enable handshake, so DriverArxEncoder::enable
+// only has to confirm the async receive thread has parsed at least one frame before
+// ServoDm::verify_position_fresh() runs. Poll the cache slot up to MAX_RETRY times with
+// SLEEP_US between attempts (50 * 1 ms = 50 ms, ~10 frame periods on a healthy bus).
+#define ARX_ENCODER_WARMUP_MAX_RETRY              50                   ///< Max cache-freshness polls during encoder enable.
+#define ARX_ENCODER_WARMUP_SLEEP_US               1000                 ///< Microseconds between encoder warmup polls (1 ms).
+
 /*!
  * @enum Role
  * @brief Device roles in teleoperation.

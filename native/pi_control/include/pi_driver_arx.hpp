@@ -54,6 +54,7 @@ class PassiveEncoderRoute {
    public:
     int encoder_id_;   ///< Encoder request CAN id (the report arrives on the map key).
     int data_index_;   ///< Cache slot in received_servo_data_ for this encoder.
+    bool firmware_compat_ = false;  ///< Tolerate multiple teaching-handle firmware revisions during EEPROM/frequency setup (config ``passive_encoder_firmware_compat``). Default false = single-format setup.
 };
 
 /*!
@@ -169,9 +170,12 @@ class DriverArx : public DriverCan {
      * @param position Target position in radians.
      * @param velocity Target velocity in radians per second.
      * @param torque Target torque in Newton-meters.
+     *
+     * Virtual so a read-only subclass (``DriverArxEncoder``) can no-op it.
      * @return ReturnCode::SUCCESS if successful, otherwise an error code.
      */
-    ReturnCode send_command(ServoDm* p_servo_dm, float kp, float kd, float position, float velocity, float torque);
+    virtual ReturnCode send_command(ServoDm* p_servo_dm, float kp, float kd, float position, float velocity,
+                                    float torque);
 
     /*!
      * @brief Enables or disables a servo motor.
@@ -180,9 +184,12 @@ class DriverArx : public DriverCan {
      * @param enable_flag True to enable, false to disable (defaults to true).
      * @param defer_effector_thermal_fault True when the effector will emit the
      *        complete thermal-stop record after this call returns.
+     *
+     * Virtual so a read-only subclass (``DriverArxEncoder``) can replace the
+     * handshake with a cache-freshness warmup poll.
      * @return ReturnCode::SUCCESS if successful, otherwise an error code.
      */
-    ReturnCode enable(int id, int type, bool enable_flag = true, bool defer_effector_thermal_fault = false);
+    virtual ReturnCode enable(int id, int type, bool enable_flag = true, bool defer_effector_thermal_fault = false);
 
     /*!
      * @brief Sends exactly one disable frame without stopping asynchronous reception.
@@ -241,9 +248,12 @@ class DriverArx : public DriverCan {
      * @param response_can_id CAN id the encoder answers on.
      * @param encoder_id Encoder request CAN id.
      * @param data_index Cache slot in received_servo_data_ for this encoder.
+     * @param firmware_compat Tolerate multiple teaching-handle firmware revisions during
+     *        EEPROM/frequency setup (config ``passive_encoder_firmware_compat``; default false).
      * @return ReturnCode::SUCCESS, or INVALID_PARAM for an out-of-range data index.
      */
-    ReturnCode register_passive_encoder(int response_can_id, int encoder_id, int data_index);
+    ReturnCode register_passive_encoder(int response_can_id, int encoder_id, int data_index,
+                                        bool firmware_compat = false);
 
     /*!
      * @brief Snapshots the cached state of a polled passive encoder.
@@ -280,9 +290,10 @@ class DriverArx : public DriverCan {
     /*!
      * @brief Validates firmware and EEPROM frequencies for one passive encoder.
      * @param request_can_id CAN id used for encoder configuration requests.
+     * @param firmware_compat Tolerate multiple teaching-handle firmware revisions (default false).
      * @return ReturnCode::SUCCESS when the encoder is ready for passive polling.
      */
-    ReturnCode configure_passive_encoder(int request_can_id);
+    ReturnCode configure_passive_encoder(int request_can_id, bool firmware_compat);
 
     /*!
      * @brief Sends a configuration request to a passive encoder.
@@ -297,28 +308,61 @@ class DriverArx : public DriverCan {
 
     /*!
      * @brief Reads one passive-encoder EEPROM byte.
+     * @param firmware_compat When true, accept both the <=2.2.x READINGS (0x86, 5-byte) and
+     *        >=2.3.x GET_EEPROM (0x87, 3-byte) reply formats; when false, require the single
+     *        READINGS format (original behavior).
      */
-    ReturnCode read_passive_encoder_eeprom(int request_can_id, uint8_t device, uint8_t offset, uint8_t* p_value);
+    ReturnCode read_passive_encoder_eeprom(int request_can_id, uint8_t device, uint8_t offset, uint8_t* p_value,
+                                           bool firmware_compat);
 
     /*!
      * @brief Reads a low/high EEPROM frequency pair.
+     * @param firmware_compat When true, fall back to the 8-bit low byte if the 16-bit high-byte
+     *        offset is unimplemented (legacy <=2.2.12 EEPROM layout); when false, a missing high
+     *        byte is an error (original behavior).
      */
     ReturnCode read_passive_encoder_frequency(int request_can_id, uint8_t device, uint8_t high_offset,
-                                              uint8_t low_offset, int* p_frequency);
+                                              uint8_t low_offset, int* p_frequency, bool firmware_compat);
 
     /*!
      * @brief Drains frames queued by startup validation before reception starts.
      */
     void drain_startup_frames();
 
+   protected:
     /*!
      * @brief Callback function to handle received CAN messages from servos.
+     *
+     * Virtual so a subclass (e.g. ``DriverArxEncoder``) that speaks a
+     * different wire protocol can override the per-frame parse while reusing
+     * ``open()``'s reception loop, the staleness scan, and the cache.
+     * ``open()`` registers a lambda that dispatches to
+     * ``this->handle_received_message``, so the override is picked up even
+     * from the base ``open()``.
+     *
      * @param p_data_buf Pointer to the data buffer.
      * @param data_buf_size Total size of the data buffer in bytes.
      * @param read_bytes Number of bytes actually read from the CAN bus.
      */
-    void handle_received_message(void* p_data_buf, size_t data_buf_size, size_t read_bytes);
+    virtual void handle_received_message(void* p_data_buf, size_t data_buf_size, size_t read_bytes);
 
+    /*!
+     * @brief Atomically update one cache slot from a decoded angle.
+     *
+     * Provided for subclasses whose status frames carry only an angle
+     * (e.g. an ARX joint encoder). Locks ``received_servo_data_mutex_``,
+     * writes ``motor_id_`` (must be non-zero so ``verify_position_fresh``
+     * passes), ``angle_actual_rad_`` and stamps ``last_update_perf_``.
+     * Velocity/torque/temperature stay at their defaults.
+     *
+     * @param data_index Target cache slot (``Servo::data_index_``).
+     * @param motor_id Non-zero id to record (use the source CAN id).
+     * @param angle_rad Decoded absolute angle in radians.
+     * @return ``SUCCESS``; ``FAIL`` if ``data_index`` is out of range.
+     */
+    ReturnCode update_encoder_slot(int data_index, int motor_id, float angle_rad);
+
+   private:
     ReceivedServoData received_servo_data_[MAX_SERVO_INFO_BUF_SIZE];  ///< Circular buffer storing servo feedback data.
     /// Explicit RX routes for passive encoders, keyed by response CAN id.
     /// Checked before the DM/ENCOS heuristics in handle_received_message().

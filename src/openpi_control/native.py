@@ -295,6 +295,11 @@ class NativeArmBackend(ArmBackend):
                     "physical native control is supported on Linux only"
                 )
             validate_connection(config.connection)
+            if role is ArmRole.FOLLOWER and config.is_read_only():
+                raise ConfigurationError(
+                    f"model {config.model!r} is read-only (leader-only, no actuation) "
+                    "and cannot be used as a follower"
+                )
             executable = native_executable()
             if not executable.is_file() or not executable.stat().st_mode & stat.S_IXUSR:
                 raise NativeProcessError(

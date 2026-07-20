@@ -7,6 +7,7 @@
 
 #include "pi_device_config.hpp"
 #include "pi_driver_arx.hpp"
+#include "pi_driver_arx_encoder.hpp"
 #include "pi_servo.hpp"
 
 Driver::Driver(Device* p_device, const CommandLineArgs& cla) {
@@ -33,8 +34,13 @@ std::shared_ptr<Driver> Driver::new_driver(Device* p_device, const DeviceConfig*
         p_driver = p_driver_arx;
         PI_INFO("Driver", InfoLevel::HELPFUL_1, "Created CAN 2.0 driver (DriverArx)");
 
+    } else if (driver_type == p_config->val_driver_type_can_encoder) {
+        auto p_driver_encoder = std::make_shared<DriverArxEncoder>(p_device, cla);
+        p_driver = p_driver_encoder;
+        PI_INFO("Driver", InfoLevel::HELPFUL_1, "Created CAN read-only encoder driver (DriverArxEncoder)");
+
     } else {
-        PI_ERROR("Unsupported driver type: '%s' (only CAN is supported)", driver_type.c_str());
+        PI_ERROR("Unsupported driver type: '%s' (supported types: CAN, CAN_ENCODER)", driver_type.c_str());
         return nullptr;
     }
 

@@ -47,6 +47,10 @@ def test_input_layout_is_derived_from_handle_configuration() -> None:
     handle = ArmConfig("leader", "Yam", SocketCanConnection("test"), effector_model="E_Yam_Handle")
     assert handle.input_layout().button_names == ("top", "bottom")
     assert handle.input_layout().axis_names == ()
+    compat = ArmConfig(
+        "leader", "Yam", SocketCanConnection("test"), effector_model="E_Yam_Handle_compat"
+    )
+    assert compat.input_layout().button_names == ("top", "bottom")
     assert not ArmConfig("leader", "Yam", SocketCanConnection("test")).input_layout().has_inputs
     assert topics_for("session", "leader").inputs == "openpi.session.leader.inputs"
 
@@ -124,7 +128,7 @@ def test_arx_uses_monopi_style_follower_tracking_limits(model_name: str) -> None
 def test_arx_model_configs_define_servo_position_limits() -> None:
     # robot-test 1.1.1 places pos_min/pos_max in the model-config servo blocks, so
     # position limits no longer depend on the instance config being loadable.
-    for model_name in ("ARX_X5",):
+    for model_name in ("ARX_X5", "ARX_ENC"):
         config = ArmConfig("arm", model_name, SocketCanConnection("test"))
         model = json.loads(config.resolve_assets().model_config.read_text())
         for joint in model["joints"]:

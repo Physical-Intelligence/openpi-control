@@ -21,6 +21,7 @@ enum class ServoType {
     NOT_SUPPORTED = 0,   ///< Unsupported or unknown servo type.
 
     ENCOS_A4310   = 101, ///< Encos A4310 servo (CAN protocol).
+    ARX_ENCODER   = 103, ///< ARX read-only joint encoder (CAN protocol, 2-byte angle, no actuation).
 
     DM_4340       = 151, ///< Dinamo DM J4340 servo (CAN protocol).
     DM_4310       = 152, ///< Dinamo DM J4310 servo (CAN protocol).

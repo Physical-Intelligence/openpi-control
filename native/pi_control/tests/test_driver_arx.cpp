@@ -22,6 +22,7 @@
 #include "pi_driver_arx.hpp"
 #undef private
 
+#include "pi_driver_arx_encoder.hpp"
 #include "pi_servo_can_encoder.hpp"
 #include "pi_servo_dm.hpp"
 
@@ -410,6 +411,93 @@ TEST(DriverArxTransport, RejectsTruncatedReceivedFrames) {
     std::vector<uint8_t> truncated_frame(1);
 
     driver.handle_received_message(truncated_frame.data(), truncated_frame.size(), truncated_frame.size());
+}
+
+namespace {
+
+// handle_received_message is protected on the encoder driver too; expose it
+// for direct frame-decoding assertions.
+class DriverArxEncoderMessageProbe : public DriverArxEncoder {
+   public:
+    using DriverArxEncoder::DriverArxEncoder;
+    using DriverArxEncoder::handle_received_message;
+};
+
+}  // namespace
+
+TEST(DriverArxEncoderDecode, DecodesTwoByteAngleFrameIntoCacheSlot) {
+    CommandLineArgs cla{};
+    DriverArxTestDevice device(cla);
+    DriverArxEncoderMessageProbe driver(&device, cla);
+    ServoDmParam param{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    DriverArxTestServoDm servo(&device, &driver, &param, 1537, ServoType::ARX_ENCODER);
+    Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
+
+    // raw = ARX_ENCODER_ZERO_RAW + 2048 -> +2048 * pi / 4096 = +pi/2 rad.
+    const uint16_t raw = ARX_ENCODER_ZERO_RAW + 2048;
+    DriverCan::can_frame_t frame{};
+    frame.can_id = 1537;
+    frame.can_dlc = ARX_ENCODER_FEEDBACK_DLC;
+    frame.data[0] = static_cast<uint8_t>(raw >> 8);
+    frame.data[1] = static_cast<uint8_t>(raw & 0xFF);
+
+    driver.handle_received_message(&frame, sizeof(frame), sizeof(frame));
+
+    EXPECT_EQ(driver.received_servo_data_[servo.data_index_].motor_id_, 1537);
+    EXPECT_NEAR(driver.received_servo_data_[servo.data_index_].angle_actual_rad_, 1.5707963f, 1e-5f);
+
+    Driver::register_servo_data_index(servo.id_, -1, nullptr);
+}
+
+TEST(DriverArxEncoderDecode, DropsFramesWithWrongDlcOrUnmappedIds) {
+    CommandLineArgs cla{};
+    DriverArxTestDevice device(cla);
+    DriverArxEncoderMessageProbe driver(&device, cla);
+    ServoDmParam param{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    DriverArxTestServoDm servo(&device, &driver, &param, 1537, ServoType::ARX_ENCODER);
+    Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
+
+    // Wrong DLC on a mapped id: not an encoder report, must not touch the slot.
+    DriverCan::can_frame_t wrong_dlc{};
+    wrong_dlc.can_id = 1537;
+    wrong_dlc.can_dlc = 8;
+    driver.handle_received_message(&wrong_dlc, sizeof(wrong_dlc), sizeof(wrong_dlc));
+    EXPECT_EQ(driver.received_servo_data_[servo.data_index_].motor_id_, 0);
+
+    // Correct DLC on an unmapped id: not for us, must not touch any slot.
+    DriverCan::can_frame_t unmapped{};
+    unmapped.can_id = 1600;
+    unmapped.can_dlc = ARX_ENCODER_FEEDBACK_DLC;
+    driver.handle_received_message(&unmapped, sizeof(unmapped), sizeof(unmapped));
+    EXPECT_EQ(driver.received_servo_data_[servo.data_index_].motor_id_, 0);
+
+    Driver::register_servo_data_index(servo.id_, -1, nullptr);
+}
+
+TEST(DriverArxEncoderLifecycle, ActuationEntryPointsAreNoOps) {
+    CommandLineArgs cla{};
+    DriverArxTestDevice device(cla);
+    DriverArxEncoder driver(&device, cla);
+    ServoDmParam param{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    DriverArxTestServoDm servo(&device, &driver, &param, 1537, ServoType::ARX_ENCODER);
+    Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
+    // Pre-populate the slot so enable() returns without exhausting the warmup window.
+    driver.received_servo_data_[servo.data_index_].motor_id_ = servo.id_;
+
+    // No socket is open: a real command would fail, a no-op succeeds untouched.
+    EXPECT_EQ(driver.send_command(&servo, 1.0f, 0.1f, 0.5f, 0.0f, 0.0f), ReturnCode::SUCCESS);
+    EXPECT_EQ(driver.reset_zero_position(servo.id_, static_cast<int>(ServoType::ARX_ENCODER)), ReturnCode::SUCCESS);
+    EXPECT_EQ(driver.enable(servo.id_, static_cast<int>(ServoType::ARX_ENCODER), true), ReturnCode::SUCCESS);
+
+    Driver::register_servo_data_index(servo.id_, -1, nullptr);
+}
+
+TEST(DriverArxEncoderLifecycle, EnableFailsFastForUnmappedIds) {
+    CommandLineArgs cla{};
+    DriverArxTestDevice device(cla);
+    DriverArxEncoder driver(&device, cla);
+
+    EXPECT_EQ(driver.enable(1999, static_cast<int>(ServoType::ARX_ENCODER), true), ReturnCode::FAIL);
 }
 
 TEST(ServoDmParser, DmStatusRejectsNullIndexLookup) {

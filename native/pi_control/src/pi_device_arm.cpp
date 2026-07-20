@@ -467,6 +467,12 @@ float DeviceArm::get_ready_move_completion_ratio() const {
 ReturnCode DeviceArm::write_hardware_values() {
     ReturnCode return_code = ReturnCode::SUCCESS;
 
+    if (is_read_only() == true) {
+        // Read-only arm (e.g. ARX encoder leader): nothing is ever written to
+        // the bus, mirroring the read-only effector path.
+        return ReturnCode::SUCCESS;
+    }
+
     if (is_driver_created_by_this_) {
         if (p_driver_ == nullptr) {
             PI_ERROR("Driver handler is not initialized in write_hardware_values()");
@@ -643,7 +649,16 @@ ReturnCode DeviceArm::init(const CommandLineArgs& cla, int argc, char** argv, st
     // gravity-compensation mode applies zero torque and the arm hangs limp,
     // drooping the moment the operator lets go. Arms whose algo lacks a
     // gravity model (base Algo no-op) still get zero torques.
-    if (role_ == Role::LEADER && cla_.leader_gravity_compensation) {
+    if (role_ == Role::LEADER && cla_.leader_gravity_compensation && is_read_only()) {
+        // Capability cross-validation: a read-only arm (passive encoders, no motors)
+        // cannot produce torque, so gravity compensation is impossible. This is not
+        // fatal -- the operator can still use the arm as a free-moving leader -- so
+        // warn loudly and continue without it.
+        enabled_gravity_compensation_ = false;
+        PI_WARN("%s_%s: gravity compensation was requested but this arm is read-only "
+                "(no motors); skipping gravity compensation and continuing as a free-moving leader",
+                model_.c_str(), id_.c_str());
+    } else if (role_ == Role::LEADER && cla_.leader_gravity_compensation) {
         enabled_gravity_compensation_ = true;
         PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0,
                 "%s_%s: leader gravity compensation enabled (algo_type=%s)",
@@ -660,6 +675,10 @@ ReturnCode DeviceArm::init(const CommandLineArgs& cla, int argc, char** argv, st
 }
 
 ReturnCode DeviceArm::verify_servos_operational() {
+    if (is_read_only()) {
+        return ReturnCode::SUCCESS;
+    }
+
     // Probe: re-send each joint's last commanded target so every servo answers with a
     // fresh status frame. DM servos never broadcast spontaneously -- without the probe,
     // verify_operational() would re-read the stale cache captured during the enable
@@ -1021,6 +1040,19 @@ ReturnCode DeviceArm::get_observation(MsgJoints& msg) {
 
 ReturnCode DeviceArm::move_to_ready_position() {
     ReturnCode return_code = ReturnCode::SUCCESS;
+
+    if (is_read_only() == true) {
+        // Read-only arm (e.g. ARX encoder leader): the joints are passive encoders
+        // that cannot be driven, so there is no home to move to. Mark ready
+        // immediately, mirroring the read-only effector path. Without this the
+        // generic stepwise move would command a home it can never reach and only
+        // exit via stuck-detection.
+        PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0, "%s_%s: read-only arm; skipping move to ready position",
+                model_.c_str(), id_.c_str());
+        is_ready_ = true;
+        is_ready_arm_ = true;
+        return ReturnCode::SUCCESS;
+    }
 
     // Scoped to startup so explicit COMMAND_MOVE_TO_READY_POS and
     // emergency-recovery homing still execute with the flag set. Seed every
@@ -1530,6 +1562,15 @@ ReturnCode DeviceArm::operate_as_leader() {
 
 ReturnCode DeviceArm::operate_as_follower() {
     ReturnCode return_code = ReturnCode::SUCCESS;
+
+    if (is_read_only() == true) {
+        // Read-only arm (e.g. ARX encoder leader): the joints cannot be driven, so
+        // follower tracking is impossible. Role/read_only cross-validation in
+        // Device::init already fast-fails this configuration; the guard here is the
+        // last line of defense if the mode is switched at runtime.
+        PI_ERROR("%s_%s is read-only and cannot operate as a follower", model_.c_str(), id_.c_str());
+        return ReturnCode::NOT_SUPPORTED;
+    }
 
     if (!p_algo_ && planning_type_ == TrajectoryPlanningType::SLEW_POS_GRAVITY) {
         PI_ERROR("Algorithm handler is not initialized in operate_as_follower()");

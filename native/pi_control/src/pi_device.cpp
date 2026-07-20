@@ -494,6 +494,16 @@ ReturnCode Device::init(const CommandLineArgs& cla, int argc, char** argv, std::
     PI_INFO("Device", InfoLevel::ESSENTIAL_0, "%s_%s: read_only=%d (defined_in_model_config=%d)",
             model_.c_str(), id_.c_str(), (int)is_read_only_, (int)read_only_defined_in_model_config);
 
+    // Capability cross-validation: a read-only device (e.g. ARX encoder leader, passive
+    // encoders with no motors) can never track commands, so a follower role request is a
+    // configuration error. Fail fast before any hardware is opened.
+    if (is_read_only_ && cla.role == Role::FOLLOWER) {
+        PI_ERROR("%s_%s is read-only (model config read_only=true) and cannot be used as a follower. "
+                 "Use it as a leader, or select a motorized model for the follower role.",
+                 model_.c_str(), id_.c_str());
+        return ReturnCode::NOT_SUPPORTED;
+    }
+
     PI_INFO("Device", InfoLevel::ESSENTIAL_0, "Initializing topic...");
     if (p_topic != nullptr) {
         p_topic_ = p_topic;

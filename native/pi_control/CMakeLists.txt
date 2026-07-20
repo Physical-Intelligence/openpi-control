@@ -71,6 +71,7 @@ set(COMMON_SOURCES
   src/pi_topic_zmq.cpp
   src/pi_driver.cpp
   src/pi_driver_arx.cpp
+  src/pi_driver_arx_encoder.cpp
   src/pi_driver_can.cpp
   src/pi_joint.cpp
   src/pi_servo.cpp

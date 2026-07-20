@@ -18,11 +18,12 @@ LEADER_CONTROL_FREQUENCY_HZ = 50
 FOLLOWER_CONTROL_FREQUENCY_HZ = 200
 
 SUPPORTED_MODELS = (
+    "ARX_ENC",
     "ARX_L5",
     "ARX_X5",
     "Yam",
 )
-SUPPORTED_EFFECTORS = ("E_ARX", "E_Yam", "E_Yam_Handle")
+SUPPORTED_EFFECTORS = ("E_ARX", "E_ARX_ENC", "E_Yam", "E_Yam_Handle", "E_Yam_Handle_compat")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +73,8 @@ class InputLayout:
 _HANDLE_INPUT_LAYOUTS = {
     # I2RT YAM teaching handle: two buttons, no joystick.
     "E_Yam_Handle": InputLayout(button_names=("top", "bottom")),
+    # Same physical handle; config variant that tolerates older handle firmware.
+    "E_Yam_Handle_compat": InputLayout(button_names=("top", "bottom")),
 }
 
 
@@ -228,3 +231,8 @@ class ArmConfig:
         if not names:
             raise ConfigurationError(f"model {self.model!r} has no joints")
         return tuple(names)
+
+    def is_read_only(self) -> bool:
+        """True when the model declares read_only (leader-only, no actuation, e.g. ARX_ENC)."""
+        data = json.loads(self.resolve_assets().model_config.read_text())
+        return bool(data.get("read_only", False))

@@ -26,6 +26,14 @@ const ServoDmParam g_servo_dm_param_encos_A4310(0.0f, 500.0f, 0.0f, 5.0f, -12.5f
                                                 DEFAULT_TOLERABLE_POS_DIFFERENCE_RAD, MAX_POS_DIFFERENCE_RAD,
                                                 DEFAULT_VELOCITY_THRESHOLD_RAD_SEC);
 
+// ARX read-only joint encoder. Only the position range is meaningful (used for
+// clipping/normalisation); kp/kd/vel/tor are never sent because DriverArxEncoder
+// no-ops send_command/enable. The wide +-12.5 rad position window mirrors the CAN
+// motor families; the real per-joint limits come from the model JSON pos_min/pos_max.
+const ServoDmParam g_servo_dm_param_arx_encoder(0.0f, 0.0f, 0.0f, 0.0f, -12.5f, 12.5f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                                DEFAULT_TOLERABLE_POS_DIFFERENCE_RAD, MAX_POS_DIFFERENCE_RAD,
+                                                DEFAULT_VELOCITY_THRESHOLD_RAD_SEC);
+
 #define MAX_CNT_MOTOR_NO_RESPONSE_INITIAL \
     500  ///< Threshold count for detecting motor no-response during initial period
 #define MAX_CNT_MOTOR_NO_RESPONSE_NORMAL \
@@ -144,6 +152,22 @@ ReturnCode ServoDm::init_current_estimation(std::string& servo_model, const Devi
         motor_params_current_estimation_.eta_g_ = 0.90;
         motor_params_current_estimation_.gear_ratio_ = 10.0;
 
+    } else if (servo_model == p_config->val_servo_model_arx_encoder) {
+        // Read-only joint encoder: no motor, no phase current. Current estimation is
+        // never exercised (DriverArxEncoder never commands torque), so neutral zeros
+        // keep the estimator inert instead of producing garbage readings.
+        motor_params_current_estimation_.kt0_ = 0.0;
+        motor_params_current_estimation_.r0_ = 0.0;
+        motor_params_current_estimation_.t0_ = 25.0;
+        motor_params_current_estimation_.beta_ = 0.0;
+        motor_params_current_estimation_.alpha_ = 0.0;
+        motor_params_current_estimation_.c1_ = 0.0;
+        motor_params_current_estimation_.c2_ = 0.0;
+        motor_params_current_estimation_.eta_inv_ = 1.0;
+        motor_params_current_estimation_.p_drv_ = 0.0;
+        motor_params_current_estimation_.eta_g_ = 1.0;
+        motor_params_current_estimation_.gear_ratio_ = 1.0;
+
     }
 
     return ReturnCode::SUCCESS;
@@ -169,6 +193,9 @@ ReturnCode ServoDm::init_config_model(const json& servo_config, const DeviceConf
     } else if (servo_model_ == p_config->val_servo_model_encos_A4310) {
         type_ = ServoType::ENCOS_A4310;
         p_servo_param_ = &g_servo_dm_param_encos_A4310;
+    } else if (servo_model_ == p_config->val_servo_model_arx_encoder) {
+        type_ = ServoType::ARX_ENCODER;
+        p_servo_param_ = &g_servo_dm_param_arx_encoder;
     } else {
         PI_ERROR("Unsupported servo model '%s' (servo ID %d)", servo_model_.c_str(), id_);
         return ReturnCode::NOT_SUPPORTED;
@@ -258,7 +285,7 @@ ReturnCode ServoDm::verify_operational() {
         PI_ERROR("CAN driver is not initialized (servo ID %d)", id_);
         return ReturnCode::NOT_INITIALIZED;
     }
-    if (type_ == ServoType::CAN_PASSIVE_ENCODER) {
+    if (type_ == ServoType::CAN_PASSIVE_ENCODER || type_ == ServoType::ARX_ENCODER) {
         // Read-only encoder: no motor state to verify.
         return ReturnCode::SUCCESS;
     }
@@ -905,7 +932,7 @@ ReturnCode ServoDm::read_hardware_values() {
 
     ReturnCode return_code = Servo::read_hardware_values();
 
-    if (type_ != ServoType::ENCOS_A4310) {
+    if (type_ != ServoType::ENCOS_A4310 && type_ != ServoType::ARX_ENCODER) {
         const DmServoStatusInfo& status = dm_servo_status_info(motor_error_code_);
         if (get_device_type_belong_to() == DeviceType::EFFECTOR && status.is_thermal_fault) {
             return latch_effector_thermal_fault(motor_error_code_, status.description, status.action,

@@ -60,6 +60,7 @@ class DeviceConfig {
 
     const std::string fn_driver_type         = "driver_type";  ///< Field name for driver type.
     const std::string val_driver_type_can        = "CAN";          ///< Value for driver type CAN.
+    const std::string val_driver_type_can_encoder = "CAN_ENCODER"; ///< Value for driver type CAN read-only encoder (DriverArxEncoder).
 
     const std::string fn_algo_type            = "algo_type";   ///< Field name for algorithm type.
     const std::string val_algo_type_algo          = "Algo";        ///< Value for algorithm type Algo.
@@ -109,6 +110,7 @@ class DeviceConfig {
     const std::string val_servo_model_dm_4310              = "DM J4310";              ///< Damiao J4310 (CAN).
     const std::string val_servo_model_encos_A4310          = "Encos EC-A4310-P2-36";  ///< Encos EC-A4310-P2-36 (CAN).
     const std::string val_servo_model_can_passive_encoder  = "CAN Passive Encoder";   ///< YAM teaching-handle trigger encoder (CAN request/response poll, read-only).
+    const std::string val_servo_model_arx_encoder           = "ARX Remote Encoder";     ///< ARX read-only joint encoder (CAN, 2-byte angle, no actuation).
     const std::string fn_servo_id                      = "servo_id";            ///< Field name for servo ID.
     const std::string fn_servo_data_index               = "data_index";          ///< Field name for servo data index.
     const std::string fn_servo_pos_min                  = "pos_min";             ///< Field name for servo position minimum (relative radian).
@@ -137,6 +139,7 @@ class DeviceConfig {
     const std::string fn_servo_home_pos                   = "home_pos";           ///< Field name for home position (relative radian).
     const std::string fn_servo_response_delay             = "response_delay";     ///< Field name for response_delay (sec).
     const std::string fn_servo_response_can_id             = "response_can_id";    ///< Field name for the CAN id a passive encoder answers on (optional; default encoder id + 1, the i2rt ``plus_one`` firmware receive mode).
+    const std::string fn_passive_encoder_firmware_compat  = "passive_encoder_firmware_compat";  ///< Field name (bool, passive encoders only; optional, default false). When true the driver tolerates multiple teaching-handle firmware revisions during EEPROM/frequency setup (both the <=2.2.x READINGS and >=2.3.x GET_EEPROM reply formats, plus the legacy <=2.2.12 8-bit frequency layout). Isolated to the YAM handle: ARX effectors have no passive encoder and never read this.
     const std::string fn_servo_reverse                    = "reverse_flag";       ///< Field name for direction reverse flag (bool).
 
     const std::string fn_joystick_deadband              = "joystick_deadband";              ///< Field name for joystick deadband (raw byte half-width applied symmetrically around the X/Y channel center).

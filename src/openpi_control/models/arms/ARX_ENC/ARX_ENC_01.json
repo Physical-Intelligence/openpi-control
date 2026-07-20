@@ -1,0 +1,87 @@
+{
+    "config_version": "1.1.1",
+    "device_model": "ARX_ENC",
+    "device_type": "arm",
+    "arm_type": "arx",
+    "spring_effect": false,
+    "gravity_compensation": false,
+    "base_rpy": [
+        0,
+        0,
+        0
+    ],
+    "joints": [
+        {
+            "joint_id": 0,
+            "reference_servo_index": 0,
+            "servos": [
+                {
+                    "servo_id": 1537,
+                    "zero_pos": 0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        },
+        {
+            "joint_id": 1,
+            "reference_servo_index": 0,
+            "servos": [
+                {
+                    "servo_id": 1538,
+                    "zero_pos": 0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        },
+        {
+            "joint_id": 2,
+            "reference_servo_index": 0,
+            "servos": [
+                {
+                    "servo_id": 1539,
+                    "zero_pos": 0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        },
+        {
+            "joint_id": 3,
+            "reference_servo_index": 0,
+            "servos": [
+                {
+                    "servo_id": 1540,
+                    "zero_pos": 0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        },
+        {
+            "joint_id": 4,
+            "reference_servo_index": 0,
+            "servos": [
+                {
+                    "servo_id": 1541,
+                    "zero_pos": 0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        },
+        {
+            "joint_id": 5,
+            "reference_servo_index": 0,
+            "servos": [
+                {
+                    "servo_id": 1542,
+                    "zero_pos": 0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        }
+    ]
+}
