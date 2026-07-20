@@ -16,7 +16,11 @@ def test_physical_model_catalog_is_complete(model: str) -> None:
     assert assets.instance_config.is_file()
     assert assets.urdf.is_file()
     assert len(config.joint_names()) == 6
-    assert json.loads(assets.model_config.read_text())["algo_type"] == "Pinocchio"
+    # The native node is always launched with --algo_type Pinocchio, which overrides
+    # any config value except "Algo" (config keeps priority for "Algo"). Arm configs
+    # must therefore never declare "Algo": robot-test 1.1.1 configs say "KDL"
+    # (overridden to Pinocchio), openpi-tuned configs say "Pinocchio" directly.
+    assert json.loads(assets.model_config.read_text())["algo_type"] in ("Pinocchio", "KDL")
 
 
 def test_logical_identity_is_separate_from_instance_config(tmp_path: Path) -> None:
@@ -75,6 +79,25 @@ def test_yam_gripper_uses_fast_motor_side_force_bound() -> None:
     assert "grip_spring_offset" not in instance
 
 
+def test_arx_gripper_uses_training_normalized_range() -> None:
+    # The model contract (state x0.375, action x4.5) assumes normalized 1.0 == 4.5 rad
+    # motor angle. Without normalized_pos_min/max the C++ node falls back to the raw
+    # servo range (read /5.077, write x4.877 with the old safety margin), feeding the
+    # policy a gripper state ~11% low and executing commands ~8% hot (fixed in 00.00.47).
+    config = ArmConfig("follower", "ARX_X5", SocketCanConnection("test"), effector_model="E_ARX")
+    assets = config.resolve_assets()
+    assert assets.effector_model_config is not None
+    model = json.loads(assets.effector_model_config.read_text())
+    joint = model["joints"][0]
+
+    assert joint["normalized_pos_min"] == 0.0
+    assert joint["normalized_pos_max"] == 4.5
+    # Mutually exclusive with the normalized range (validated by the native node).
+    assert "pos_max_safety_margin" not in joint
+    # The raw servo limit stays as the safety bound.
+    assert joint["servos"][0]["pos_max"] == 5.077
+
+
 def test_yam_uses_monopi_style_follower_tracking_constants() -> None:
     config = ArmConfig("follower", "Yam", SocketCanConnection("test"))
     model = json.loads(config.resolve_assets().model_config.read_text())
@@ -86,12 +109,27 @@ def test_yam_uses_monopi_style_follower_tracking_constants() -> None:
     assert [joint["vel_max"] for joint in model["joints"]] == [2.0] * 6
 
 
-def test_arx_x5_uses_yam_style_follower_velocity_limits() -> None:
-    config = ArmConfig("follower", "ARX_X5", SocketCanConnection("test"))
+@pytest.mark.parametrize("model_name", ["ARX_X5", "ARX_L5"])
+def test_arx_uses_monopi_style_follower_tracking_limits(model_name: str) -> None:
+    # ARX_X5 and ARX_L5 mirror the Yam velocity limits (X5 restored in
+    # 00.00.36, L5 in 00.00.57): the 0.3 rad/s robot-test cap made follower
+    # tracking far too sluggish for policy execution.
+    config = ArmConfig("follower", model_name, SocketCanConnection("test"))
     model = json.loads(config.resolve_assets().model_config.read_text())
 
     assert [joint["follow_vel_max"] for joint in model["joints"]] == [2.5, 2.6, 2.8, 6.0, 6.0, 6.0]
     assert [joint["vel_max"] for joint in model["joints"]] == [2.0] * 6
+
+
+def test_arx_model_configs_define_servo_position_limits() -> None:
+    # robot-test 1.1.1 places pos_min/pos_max in the model-config servo blocks, so
+    # position limits no longer depend on the instance config being loadable.
+    for model_name in ("ARX_X5",):
+        config = ArmConfig("arm", model_name, SocketCanConnection("test"))
+        model = json.loads(config.resolve_assets().model_config.read_text())
+        for joint in model["joints"]:
+            for servo in joint["servos"]:
+                assert servo["pos_min"] < servo["pos_max"]
 
 
 def test_connect_timeout_is_validated_and_generous_by_default() -> None:

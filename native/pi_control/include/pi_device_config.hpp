@@ -21,7 +21,7 @@ enum class DeviceConfigType {
     EFFECTOR             ///< Attached end-effector configuration.
 };
 
-#define CURRENT_CONFIG_VERSION "1.1.0"  ///< Currently supported configuration file format version.
+#define CURRENT_CONFIG_VERSION "1.1.1"  ///< Currently supported configuration file format version.
 
 /*!
  * @class DeviceConfig

@@ -74,6 +74,8 @@ class Servo {
     float home_pos_rel_ = 0;                                 ///< Home position in relative radian (used for initial positioning and parking).
     float pos_min_rel_;                                       ///< Minimum position limit in relative radian.
     float pos_max_rel_;                                       ///< Maximum position limit in relative radian.
+    bool pos_min_configured_ = false;                         ///< Whether pos_min was loaded from any configuration file.
+    bool pos_max_configured_ = false;                         ///< Whether pos_max was loaded from any configuration file.
     float curr_pos_abs_ = 0;                                  ///< Current position in absolute radian (raw servo value).
     float curr_vel_ = 0;                                      ///< Current velocity in rad/sec.
     float curr_tor_ = 0;                                      ///< Current torque in Nm.

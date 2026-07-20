@@ -42,7 +42,7 @@ class DeviceConfigTest : public ::testing::Test {
 
 TEST_F(DeviceConfigTest, LoadsExplicitModelConfigPath) {
     const auto path = write_config("model.json", R"({
-        "config_version": "1.1.0",
+        "config_version": "1.1.1",
         "device_model": "Yam",
         "device_type": "arm"
     })");
@@ -114,7 +114,7 @@ TEST_F(DeviceConfigTest, GetFieldValueRejectsTypeMismatch) {
 
 TEST_F(DeviceConfigTest, EffectorOpenAtMinCascadesIntoServoDicts) {
     const auto path = write_config("effector_01.json", R"({
-        "config_version": "1.1.0",
+        "config_version": "1.1.1",
         "open_at_min": true,
         "joints": [
             {"servos": [{"servo_id": 1}, {"servo_id": 2, "open_at_min": false}]},

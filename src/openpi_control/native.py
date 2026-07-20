@@ -55,6 +55,7 @@ from .types import (
     JointState,
     PositionCommand,
 )
+from .urdf_inertial import prepare_merged_urdf
 
 _ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
@@ -322,6 +323,16 @@ class NativeArmBackend(ArmBackend):
     ) -> ArmCapabilities:
         self._config, self._role, self._topics = config, role, topics
         self._input_layout = config.input_layout() if role is ArmRole.LEADER else InputLayout()
+        # The gravity model must see the effector inertia exactly once: hand the
+        # node a merged URDF whose end link inertial is replaced with the effector
+        # mass model (zero mass when no effector). A caller-supplied URDF is
+        # trusted as-is and skips merging.
+        if config.urdf is None:
+            urdf_path = prepare_merged_urdf(
+                assets, model=config.model, effector_model=config.effector_model
+            )
+        else:
+            urdf_path = assets.urdf
         self._state_sub = _Subscriber(self._context, topics.state)
         self._status_sub = _Subscriber(self._context, topics.status)
         self._lifecycle_pub = _Publisher(self._context, topics.lifecycle_command)
@@ -348,6 +359,11 @@ class NativeArmBackend(ArmBackend):
             os.environ.get("OPENPI_CONTROL_INFO_LEVEL", "0"),
             "--topic_type",
             "ZMQ",
+            # Model configs (format 1.1.1, shared with robot-test) declare "KDL",
+            # which this node does not ship; force the Pinocchio implementation.
+            # Effector configs declaring "Algo" keep priority over this flag.
+            "--algo_type",
+            "Pinocchio",
             "--topic_state",
             topics.state,
             "--topic_live_command",
@@ -363,7 +379,7 @@ class NativeArmBackend(ArmBackend):
             "--arm_instance_config",
             str(assets.instance_config),
             "--urdf_path",
-            str(assets.urdf),
+            str(urdf_path),
             "--force_feedback",
             "-1",
             # Connect is passive: the arm holds its current pose instead of

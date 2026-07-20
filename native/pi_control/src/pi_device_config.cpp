@@ -60,7 +60,9 @@ void DeviceConfig::cascade_effector_open_at_min_to_servos() {
 }
 
 ReturnCode DeviceConfig::init_config(const std::string& file_path) {
-    PI_INFO("DeviceConfig", InfoLevel::DETAIL_2, "Loading configuration file: %s", file_path.c_str());
+    // ESSENTIAL_0: seeing exactly which model/instance config file was loaded is a
+    // required pre-flight check before driving real hardware (limits come from here).
+    PI_INFO("DeviceConfig", InfoLevel::ESSENTIAL_0, "Loading configuration file: %s", file_path.c_str());
 
     std::ifstream config_file(file_path);
     if (!config_file.is_open()) {

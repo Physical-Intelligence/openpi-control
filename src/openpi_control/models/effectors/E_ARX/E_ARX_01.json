@@ -1,36 +1,33 @@
 {
-    "config_version": "1.1.0",
+    "config_version": "1.1.1",
     "device_model": "E_ARX",
     "device_type": "effector",
     "effector_type": "arx",
-    "spring_effect" : false,
-
+    "spring_effect": false,
     "control_mode": "torque",
     "dist_to_torque_const": 2.0,
-
-    "base_rpy": [0, 0, 0],
-
-    
+    "base_rpy": [
+        0,
+        0,
+        0
+    ],
+    "rpy_invert": [
+        1,
+        1,
+        1
+    ],
     "joints": [
         {
-            "joint_id": 7,
-            
+            "joint_id": 6,
             "reference_servo_index": 0,
-            "spring_invert": false,
-
             "servos": [
                 {
                     "servo_id": 8,
-
-                    "pos_min": 0,
-                    "pos_max": 5.077,
-                    "reverse_flag": false,
                     "zero_pos": 0.019,
                     "home_pos": 0,
                     "spring_home_pos": 4.9
                 }
             ]
-            
         }
     ]
 }

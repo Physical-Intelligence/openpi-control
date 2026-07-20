@@ -11,6 +11,12 @@ from pathlib import Path
 from .exceptions import ConfigurationError
 
 _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]*$")
+
+# Native control-loop rates by role, matching robot-test's teleoperation stack:
+# leaders sample and publish live commands at 50 Hz; followers track at 200 Hz.
+LEADER_CONTROL_FREQUENCY_HZ = 50
+FOLLOWER_CONTROL_FREQUENCY_HZ = 200
+
 SUPPORTED_MODELS = (
     "ARX_L5",
     "ARX_X5",
