@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "pi_joint.hpp"
+#include "pi_profile.hpp"
 #include "pi_servo_can_encoder.hpp"
 
 // Trigger displacement per encoder tick.
@@ -328,6 +329,9 @@ ReturnCode ServoCanPassiveEncoder::parse_encoder_status(const DriverCan::can_fra
     slot.temperature_ = 0;
     slot.digital_inputs_ = p_data[5];
     slot.update_count_++;
+    // Stamp bus liveness for the staleness watchdog
+    // (DriverArx::group_read_hardware_values / ServoDm::read_hardware_values).
+    slot.last_update_perf_ = Profile::get_time_now();
 
     return ReturnCode::SUCCESS;
 }

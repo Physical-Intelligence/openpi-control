@@ -41,17 +41,17 @@ pkg_check_modules(PINOCCHIO REQUIRED pinocchio)
 # without hard-coding those directories into the installed executable.
 set(CMAKE_BUILD_RPATH ${PINOCCHIO_LIBRARY_DIRS} ${PC_ZMQ_LIBRARY_DIRS})
 
-# Include directories
+# Include directories. Do not add /usr/local here: a host-wide Pinocchio (e.g. a
+# different version installed by another project) would shadow the pinned .deps
+# build and break the link with an ABI mismatch. pkg-config supplies every
+# required -I/-L for the pinned dependencies.
 include_directories(
   include
-  /usr/local/include
   ${Boost_INCLUDE_DIRS}
   ${PC_ZMQ_INCLUDE_DIRS}
   ${OPENPI_CONTROL_CPPZMQ_INCLUDE_DIR}
   ${PINOCCHIO_INCLUDE_DIRS}
 )
-
-link_directories(/usr/local/lib)
 
 # pkg-config gives -L in *_LIBRARY_DIRS; plain -l flags in target_link_libraries need those dirs here.
 if(PINOCCHIO_LIBRARY_DIRS)

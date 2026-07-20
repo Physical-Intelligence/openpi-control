@@ -132,10 +132,8 @@ void DeviceArm::clear_command_buffers_for_move_to_ready() {
 }
 
 void DeviceArm::reset_slew_targets_to_current() {
-    if (planning_type_ != TrajectoryPlanningType::SLEW_POS_GRAVITY) {
-        return;
-    }
-
+    // The synchronized follower slew integrates from prev_target_pos_ for every
+    // planning type, so the rebase must run unconditionally.
     for (auto& p_joint : joints_) {
         const float current = p_joint->get_pos_rad_relative();
         p_joint->target_pos_ = current;
@@ -193,26 +191,47 @@ ReturnCode DeviceArm::read_hardware_values() {
         group_return_code = p_driver_->group_read_hardware_values();
         if (group_return_code != ReturnCode::SUCCESS) {
             // Pull the driver-level dead-set and mark every affected joint as failed.
-            const auto driver_dead = p_driver_->dead_servo_ids();
-            const int driver_failed_servo_id = p_driver_->last_failed_servo_id();
-            if (driver_failed_servo_id >= 0) {
-                set_last_failed_joint_id(driver_failed_servo_id);
-            }
-            if (tolerate_partial_failure) {
-                for (int sid : driver_dead) {
-                    mark_joint_failed_during_recovery(static_cast<int16_t>(sid));
+            auto driver_dead = p_driver_->dead_servo_ids();
+            // The driver scans every servo bound to this device, including the
+            // effector's (get_servo_ids() appends them). DeviceArm::start() only
+            // starts the effector AFTER the arm's first read, and DM servos never
+            // broadcast spontaneously -- so before the effector has been started,
+            // its servos cannot have produced a frame yet and always scan as
+            // "dead" here. That is a startup-ordering artifact, not a hardware
+            // failure: drop not-yet-started effector servos from this cycle's
+            // dead-set. Once the effector is ready its servos are scanned again.
+            if (p_effector_ != nullptr && p_effector_->is_ready() == false) {
+                std::vector<int> effector_servo_ids;
+                if (p_effector_->get_servo_ids(effector_servo_ids) == ReturnCode::SUCCESS) {
+                    for (int effector_sid : effector_servo_ids) {
+                        driver_dead.erase(effector_sid);
+                    }
                 }
             }
-            if (in_recovery) {
-                PI_WARN("Group read failed during recovery for %s_%s (dead_servo_ids=%zu, first=%d); continuing with cached data for responsive joints",
-                        model_.c_str(), id_.c_str(), driver_dead.size(), driver_failed_servo_id);
-            } else if (is_ready_ == false) {
-                is_normal_status_ = false;
-                PI_WARN("Group read failed during startup for %s_%s (dead_servo_ids=%zu, first=%d); marking dead servos failed and continuing",
-                        model_.c_str(), id_.c_str(), driver_dead.size(), driver_failed_servo_id);
+            if (driver_dead.empty()) {
+                group_return_code = ReturnCode::SUCCESS;
             } else {
-                PI_ERROR("Group read hardware values failed for %s_%s (dead_servo_ids=%zu, first=%d)",
-                         model_.c_str(), id_.c_str(), driver_dead.size(), driver_failed_servo_id);
+                // Lowest dead id is the most useful single id to surface (same
+                // rule as the driver: on a daisy-chained bus the lowest id is
+                // the disconnection point).
+                const int driver_failed_servo_id = *driver_dead.begin();
+                set_last_failed_joint_id(driver_failed_servo_id);
+                if (tolerate_partial_failure) {
+                    for (int sid : driver_dead) {
+                        mark_joint_failed_during_recovery(static_cast<int16_t>(sid));
+                    }
+                }
+                if (in_recovery) {
+                    PI_WARN("Group read failed during recovery for %s_%s (dead_servo_ids=%zu, first=%d); continuing with cached data for responsive joints",
+                            model_.c_str(), id_.c_str(), driver_dead.size(), driver_failed_servo_id);
+                } else if (is_ready_ == false) {
+                    is_normal_status_ = false;
+                    PI_WARN("Group read failed during startup for %s_%s (dead_servo_ids=%zu, first=%d); marking dead servos failed and continuing",
+                            model_.c_str(), id_.c_str(), driver_dead.size(), driver_failed_servo_id);
+                } else {
+                    PI_ERROR("Group read hardware values failed for %s_%s (dead_servo_ids=%zu, first=%d)",
+                             model_.c_str(), id_.c_str(), driver_dead.size(), driver_failed_servo_id);
+                }
             }
             return_code = ReturnCode::SUCCESS;
         }
@@ -640,6 +659,68 @@ ReturnCode DeviceArm::init(const CommandLineArgs& cla, int argc, char** argv, st
     return ReturnCode::SUCCESS;
 }
 
+ReturnCode DeviceArm::verify_servos_operational() {
+    // Probe: re-send each joint's last commanded target so every servo answers with a
+    // fresh status frame. DM servos never broadcast spontaneously -- without the probe,
+    // verify_operational() would re-read the stale cache captured during the enable
+    // handshake and miss any error latched since then. Re-sending prev_target_pos_ is
+    // the same "re-assert current command" pattern the recovery stall path uses, so a
+    // healthy servo sees no position change.
+    const auto failed_ids = failed_joint_ids_snapshot();
+    bool any_probe_sent = false;
+    for (auto& p_joint : joints_) {
+        const int16_t sid = p_joint->reference_servo_id();
+        if (sid >= 0 && failed_ids.count(sid) != 0) {
+            continue;
+        }
+        ReturnCode probe_rc = p_joint->move(p_joint->prev_target_pos_);
+        if (probe_rc != ReturnCode::SUCCESS) {
+            PI_ERROR("%s_%s: joint id=%d pre-loop verification probe failed (rc=%d)",
+                     model_.c_str(), id_.c_str(), p_joint->id_, static_cast<int>(probe_rc));
+            return probe_rc;
+        }
+        any_probe_sent = true;
+    }
+    if (any_probe_sent) {
+        // Flush the probe to the bus. CAN drivers (ARX) transmit inside move() and this
+        // is a no-op there, but the call keeps the sequence correct for any queued
+        // group-write driver added later.
+        if (p_driver_ != nullptr) {
+            ReturnCode flush_rc = p_driver_->group_write_hardware_values();
+            if (flush_rc != ReturnCode::SUCCESS) {
+                PI_ERROR("%s_%s: pre-loop verification probe flush failed (rc=%d)",
+                         model_.c_str(), id_.c_str(), static_cast<int>(flush_rc));
+                return flush_rc;
+            }
+        }
+        usleep(VERIFY_SERVOS_PROBE_WAIT_US);
+    }
+
+    for (auto& p_joint : joints_) {
+        const int16_t sid = p_joint->reference_servo_id();
+        if (sid >= 0 && failed_ids.count(sid) != 0) {
+            continue;
+        }
+        ReturnCode return_code = p_joint->verify_operational();
+        if (return_code != ReturnCode::SUCCESS) {
+            PI_ERROR("%s_%s: joint id=%d failed pre-loop servo error-state verification (rc=%d); refusing to run",
+                     model_.c_str(), id_.c_str(), p_joint->id_, static_cast<int>(return_code));
+            return return_code;
+        }
+    }
+
+    if (p_effector_) {
+        ReturnCode effector_rc = p_effector_->verify_servos_operational();
+        if (effector_rc != ReturnCode::SUCCESS) {
+            return effector_rc;
+        }
+    }
+
+    PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0, "%s_%s: pre-loop servo verification passed", model_.c_str(),
+            id_.c_str());
+    return ReturnCode::SUCCESS;
+}
+
 ReturnCode DeviceArm::start(int baud_rate) {
     ReturnCode return_code = Device::start(baud_rate);
     if (return_code != ReturnCode::SUCCESS) {
@@ -676,6 +757,27 @@ ReturnCode DeviceArm::start(int baud_rate) {
     // step fails or that are already on the failed list get marked failed and skipped --
     // the rest of startup continues so the arm can still reach ready on partial hardware.
     if (is_read_only() == false) {
+        // Refuse to start streaming commands into an arm whose servo carries a
+        // latched error (e.g. a DM communication-loss trip): the motor keeps
+        // reporting positions but produces no torque, so the joint would
+        // collapse under gravity the moment the ready move begins.
+        // verify_operational() attempts one re-enable for DM servos before
+        // failing. Joints already on the failed list (dead bus, tolerated
+        // partial startup) are skipped -- their handling is unchanged.
+        const auto failed_before_verify = failed_joint_ids_snapshot();
+        for (auto& p_joint : joints_) {
+            const int16_t sid = p_joint->reference_servo_id();
+            if (sid >= 0 && failed_before_verify.count(sid) != 0) {
+                continue;
+            }
+            return_code = p_joint->verify_operational();
+            if (return_code != ReturnCode::SUCCESS) {
+                PI_ERROR("%s_%s: joint id=%d failed servo error-state verification (rc=%d); aborting start",
+                         model_.c_str(), id_.c_str(), p_joint->id_, static_cast<int>(return_code));
+                return fail_after_partial_start(return_code);
+            }
+        }
+
         const auto failed_before_hold = failed_joint_ids_snapshot();
         bool any_hold_sent = false;
         for (auto& p_joint : joints_) {
@@ -905,7 +1007,8 @@ ReturnCode DeviceArm::get_observation(MsgJoints& msg) {
 
     for (auto& p_joint : joints_) {
         msg.add_joint_info(p_joint->get_pos_rad_relative(), p_joint->get_vel_rad_sec(), p_joint->get_tor_nm(),
-                           p_joint->get_temperature(), p_joint->get_idc_current());
+                           p_joint->get_temperature(), p_joint->get_idc_current(),
+                           static_cast<float>(p_joint->get_frame_age_ms()));
     }
 
     ///< @todo Assign a dedicated topic channel to effector for independent observation
@@ -1461,37 +1564,36 @@ ReturnCode DeviceArm::operate_as_follower() {
         }
     }
 
-    float slew_scale = 1.0f;
-    if (planning_type_ == TrajectoryPlanningType::SLEW_POS_GRAVITY) {
-        if (slew_goal_positions_.size() != joints_.size() || control_frequency_ <= 0) {
-            PI_ERROR("Invalid synchronized slew state in operate_as_follower() for %s_%s", model_.c_str(),
-                     id_.c_str());
-            return ReturnCode::NOT_INITIALIZED;
-        }
+    // Synchronized follower slew: bound the tracking velocity by each joint's
+    // follow_vel_max for EVERY planning type, not just SLEW_POS_GRAVITY. Direct
+    // tracking (planning "None") used to hand the raw leader target to the PD
+    // loop, so a 50 Hz command staircase was traversed as stiff instantaneous
+    // steps and follow_vel_max was silently ignored. One shared scale keeps the
+    // multi-joint motion synchronized (straight line in joint space).
+    if (slew_goal_positions_.size() != joints_.size() || control_frequency_ <= 0) {
+        PI_ERROR("Invalid synchronized slew state in operate_as_follower() for %s_%s", model_.c_str(),
+                 id_.c_str());
+        return ReturnCode::NOT_INITIALIZED;
+    }
 
-        const float dt = 1.0f / static_cast<float>(control_frequency_);
-        int slew_i = 0;
-        for (auto& p_joint : joints_) {
-            const float goal = p_joint->get_safe_tele_pos_rad();
-            slew_goal_positions_[slew_i] = goal;
-            const float delta = std::fabs(goal - p_joint->prev_target_pos_);
-            if (delta > 0.0f) {
-                slew_scale = std::min(slew_scale, p_joint->follow_vel_max_ * dt / delta);
-            }
-            slew_i++;
+    float slew_scale = 1.0f;
+    const float dt = 1.0f / static_cast<float>(control_frequency_);
+    int slew_i = 0;
+    for (auto& p_joint : joints_) {
+        const float goal = p_joint->get_safe_tele_pos_rad();
+        slew_goal_positions_[slew_i] = goal;
+        const float delta = std::fabs(goal - p_joint->prev_target_pos_);
+        if (delta > 0.0f) {
+            slew_scale = std::min(slew_scale, p_joint->follow_vel_max_ * dt / delta);
         }
+        slew_i++;
     }
 
     int i = 0;
     for (auto& p_joint : joints_) {
-        if (planning_type_ == TrajectoryPlanningType::SLEW_POS_GRAVITY) {
-            const float previous = p_joint->prev_target_pos_;
-            const float cmd = previous + slew_scale * (slew_goal_positions_[i] - previous);
-            return_code = move(p_joint.get(), cmd, target_tor_[i], 1.0);
-        } else {
-            return_code =
-                move(p_joint.get(), p_joint->get_safe_tele_pos_rad(), target_tor_[i], 1.0);
-        }
+        const float previous = p_joint->prev_target_pos_;
+        const float cmd = previous + slew_scale * (slew_goal_positions_[i] - previous);
+        return_code = move(p_joint.get(), cmd, target_tor_[i], 1.0);
         if (return_code != ReturnCode::SUCCESS) {
             PI_ERROR("Failed to move joint %d in operate_as_follower() for %s_%s",
                      p_joint->id_, model_.c_str(), id_.c_str());

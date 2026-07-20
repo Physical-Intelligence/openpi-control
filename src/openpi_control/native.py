@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import re
@@ -56,6 +57,16 @@ from .types import (
 )
 
 _ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+# Status messages (acks, READY, MODE) must all be processed in order, so the
+# reader drains the whole queue every poll; the cap only guards against a
+# runaway publisher starving the other subscribers.
+MAX_STATUS_MESSAGES_PER_POLL = 256
+# Discarding a handful of state/input samples per poll is normal (the native
+# node publishes faster than the reader polls). A backlog beyond this many
+# messages means the consumer stalled and the policy would have been fed stale
+# state, so it is worth a warning.
+STREAM_BACKLOG_WARN_MESSAGES = 50
 
 
 def _hardware_fault_message(log_line: str) -> str | None:
@@ -161,6 +172,30 @@ class _Subscriber:
         if topic != self.topic:
             return None
         return payload
+
+    def recv_latest(self) -> tuple[bytes | None, int]:
+        """Drain every queued message and return (newest payload, discarded older count).
+
+        Last-value-wins streams (state, inputs) must always be consumed to the
+        newest sample: reading one message per poll replays any backlog one
+        stale sample per cycle, so a transient consumer stall becomes a
+        permanent multi-second state lag (TCP socket buffers hold well over
+        10 s of 100 Hz traffic despite the HWM of 2). The native node guards
+        its own SUB sockets the same way (drain_sub_to_latest in
+        pi_topic_zmq.cpp).
+        """
+        latest: bytes | None = None
+        discarded = 0
+        while True:
+            try:
+                topic, payload = self.socket.recv_multipart(zmq.NOBLOCK)
+            except zmq.Again:
+                return latest, discarded
+            if topic != self.topic:
+                continue
+            if latest is not None:
+                discarded += 1
+            latest = payload
 
     def close(self) -> None:
         self.socket.close(0)
@@ -448,12 +483,29 @@ class NativeArmBackend(ArmBackend):
                 with self._condition:
                     if not self._running or self._reader is not reader:
                         return
-                for subscriber, consume in (
-                    (state_sub, self._consume_state),
-                    (status_sub, self._consume_status),
-                    (inputs_sub, self._consume_inputs),
+                # Status messages (acks, READY, MODE) all carry meaning, so the
+                # entire queue is processed in order. State and inputs are
+                # last-value-wins streams and are drained to the newest sample
+                # every poll -- see _Subscriber.recv_latest for why.
+                if status_sub:
+                    for _ in range(MAX_STATUS_MESSAGES_PER_POLL):
+                        payload = status_sub.recv()
+                        if payload is None:
+                            break
+                        with self._condition:
+                            if not self._running or self._reader is not reader:
+                                return
+                            self._consume_status(payload)
+                for subscriber, consume, stream in (
+                    (state_sub, self._consume_state, "state"),
+                    (inputs_sub, self._consume_inputs, "inputs"),
                 ):
-                    if subscriber and (payload := subscriber.recv()) is not None:
+                    if not subscriber:
+                        continue
+                    payload, discarded = subscriber.recv_latest()
+                    if discarded >= STREAM_BACKLOG_WARN_MESSAGES:
+                        self._warn_stream_backlog(stream, discarded)
+                    if payload is not None:
                         with self._condition:
                             if not self._running or self._reader is not reader:
                                 return
@@ -475,12 +527,25 @@ class NativeArmBackend(ArmBackend):
                     self._condition.notify_all()
                 return
 
+    def _warn_stream_backlog(self, stream: str, discarded: int) -> None:
+        name = self._config.name if self._config else "unknown"
+        hz = self._config.control_frequency_hz if self._config else 0
+        stalled_s = discarded / hz if hz > 0 else 0.0
+        logging.getLogger(__name__).warning(
+            "%s: drained %d stale %s message(s) (~%.1f s of backlog); "
+            "the consumer stalled and the discarded samples were never observed",
+            name,
+            discarded,
+            stream,
+            stalled_s,
+        )
+
     def _consume_state(self, payload: bytes) -> None:
         if len(payload) != JOINT_STRUCT.size:
             raise ProtocolError(f"invalid joint payload size {len(payload)}")
         assert self._config is not None and self._role is not None
         values = JOINT_STRUCT.unpack(payload)
-        joint_count = int(values[51])
+        joint_count = int(values[61])
         arm_dof = len(self._config.joint_names())
         if joint_count < arm_dof:
             raise ProtocolError(
@@ -491,6 +556,7 @@ class NativeArmBackend(ArmBackend):
         efforts = values[20:30][:arm_dof]
         temperatures = values[30:40][:arm_dof]
         currents = values[40:50][:arm_dof]
+        frame_ages = values[50:60][:arm_dof]
         effector = (
             EffectorState(
                 position=float(values[arm_dof]),
@@ -498,6 +564,7 @@ class NativeArmBackend(ArmBackend):
                 effort_nm=float(values[20 + arm_dof]),
                 temperature_c=float(values[30 + arm_dof]),
                 current_a=float(values[40 + arm_dof]),
+                frame_age_ms=float(values[50 + arm_dof]),
             )
             if joint_count > arm_dof
             else None
@@ -520,11 +587,12 @@ class NativeArmBackend(ArmBackend):
                     effort_nm=efforts,
                     temperature_c=temperatures,
                     current_a=currents,
+                    frame_age_ms=frame_ages,
                 ),
                 effector=effector,
                 monotonic_timestamp=time.monotonic(),
                 wall_timestamp=time.time(),
-                sequence=int(values[50]),
+                sequence=int(values[60]),
                 mode=previous_mode,
             )
             self._state_generation += 1
@@ -779,6 +847,8 @@ class NativeArmBackend(ArmBackend):
             + [0.0] * 10
             + [0.0] * 10
             + [0.0] * 10
+            # joint_age_ms slots: meaningless for a target command (-1 = unknown).
+            + [-1.0] * 10
         )
         return JOINT_STRUCT.pack(
             *arrays, int(time.monotonic_ns() & 0x7FFFFFFF), joint_count, 1, 0.0

@@ -88,6 +88,36 @@ int main(int argc, char** argv) {
             return -1;
         }
 
+        // Final servo error-state check after the whole start() sequence. The
+        // in-start() verification can pass and a servo can still latch a
+        // communication-loss error afterwards (e.g. a stale RAM protection
+        // window expiring while a slow sibling servo was enabling). A latched
+        // DM servo keeps reporting positions but produces no torque, so
+        // without this check the joint would silently collapse under gravity
+        // once commands stream. verify_servos_operational() probes for fresh
+        // status frames, attempts one re-enable per latched DM servo, and
+        // fails the startup if a servo stays in an error state. Must run
+        // BEFORE arm_comm_loss_protection(): the recovery re-enable disarms
+        // the DM TIMEOUT register, so arming has to stay the last step.
+        return_code = p_device->verify_servos_operational();
+        if (return_code != ReturnCode::SUCCESS) {
+            PI_ERROR("Pre-loop servo verification failed: error code=%d", return_code);
+            return -1;
+        }
+
+        // Assert the servo communication-loss policy only now, when every
+        // servo is enabled and verified and the command stream starts within
+        // milliseconds. The window is per-device (wants_comm_loss_stop()):
+        // armed for velocity/torque-commanded servos (stop a runaway), and
+        // disarmed for position-commanded servos (keep holding the last
+        // position instead of collapsing detorqued). Failures are loud but
+        // non-fatal: the servos stay controllable, just with an unasserted
+        // policy.
+        return_code = p_device->arm_comm_loss_protection();
+        if (return_code != ReturnCode::SUCCESS) {
+            PI_ERROR("Failed to arm communication-loss protection: error code=%d", return_code);
+        }
+
         int capability_flags = PI_CONTROL_CAP_MOVE_TO_READY;
         if (cla.role == Role::FOLLOWER) {
             capability_flags |= PI_CONTROL_CAP_DIRECT_COMMAND | PI_CONTROL_CAP_LIVE_INPUT;

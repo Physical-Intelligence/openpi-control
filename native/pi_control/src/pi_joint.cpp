@@ -559,6 +559,16 @@ ReturnCode Joint::verify_position_fresh() {
     return servos_[reference_servo_index_]->verify_position_fresh();
 }
 
+ReturnCode Joint::verify_operational() {
+    for (auto& p_servo : servos_) {
+        ReturnCode return_code = p_servo->verify_operational();
+        if (return_code != ReturnCode::SUCCESS) {
+            return return_code;
+        }
+    }
+    return ReturnCode::SUCCESS;
+}
+
 ReturnCode Joint::hold_at_current_position() {
     const float curr = get_pos_rad_relative();
     // Initialise the ready-move integration state so move_to_ready_position()'s init block

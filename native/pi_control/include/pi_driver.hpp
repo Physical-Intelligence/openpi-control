@@ -97,6 +97,16 @@ class Driver {
     virtual ReturnCode group_write_hardware_values() { return ReturnCode::SUCCESS; }
 
     /*!
+     * @brief Asserts the servo-side communication-loss policy (protection
+     *        window armed or disarmed per Device::wants_comm_loss_stop())
+     *        for every servo bound to this driver's device. Called once,
+     *        right before the command stream starts. Default: nothing to
+     *        assert (drivers without servo-side protection windows).
+     * @return ReturnCode::SUCCESS if successful, otherwise an error code.
+     */
+    virtual ReturnCode arm_comm_loss_protection() { return ReturnCode::SUCCESS; }
+
+    /*!
      * @brief Resets the zero position (encoder offset) of a servo motor.
      * @param id Servo ID of the servo.
      * @param type Servo type or model identifier.
@@ -150,10 +160,10 @@ class Driver {
     static std::map<int, int> map_id_to_data_index_;  ///< Static map from servo ID to data index.
     static std::map<int, class Servo*> map_id_to_servo_;  ///< Static map from servo ID to Servo pointer.
 
-   private:
-    friend class Servo;
-    friend class ServoDm;
-
+   protected:
+    // RegisteredServo / lock_registered_servo are protected (not private) so
+    // driver subclasses (e.g. DriverArx::arm_comm_loss_protection) can take a
+    // locked registry snapshot with the same discipline as the parsers.
     class RegisteredServo {
        public:
         RegisteredServo(RegisteredServo&&) = default;
@@ -168,6 +178,11 @@ class Driver {
         class Servo* p_servo_;
     };
 
-    static void unregister_servo(class Servo* p_servo);
     static RegisteredServo lock_registered_servo(int servo_id);
+
+   private:
+    friend class Servo;
+    friend class ServoDm;
+
+    static void unregister_servo(class Servo* p_servo);
 };

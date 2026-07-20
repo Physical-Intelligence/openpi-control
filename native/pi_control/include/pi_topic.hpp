@@ -96,6 +96,7 @@ class DataJoint {
     float curr_tor_;    ///< Current torque of the joint (Nm).
     float temperature_; ///< Current temperature of the joint (degrees Celsius).
     float idc_current_; ///< Input DC current of the joint (A).
+    float frame_age_ms_; ///< Age of the hardware frame backing curr_pos_ (ms, -1 = unknown).
 };
 
 /*!
@@ -114,14 +115,18 @@ class MsgJoints {
      * @param curr_tor Joint torque (Nm).
      * @param temperature Joint temperature (degrees Celsius).
      * @param idc_current Joint DC current (A).
+     * @param frame_age_ms Age of the hardware frame backing the position (ms,
+     *        -1 when the source has no per-joint freshness, e.g. command ingest).
      */
-    void add_joint_info(float curr_pos_rel, float curr_vel, float curr_tor, float temperature, float idc_current) {
+    void add_joint_info(float curr_pos_rel, float curr_vel, float curr_tor, float temperature, float idc_current,
+                        float frame_age_ms) {
         DataJoint data_joint;
         data_joint.curr_pos_ = curr_pos_rel;
         data_joint.curr_vel_ = curr_vel;
         data_joint.curr_tor_ = curr_tor;
         data_joint.temperature_ = temperature;
         data_joint.idc_current_ = idc_current;
+        data_joint.frame_age_ms_ = frame_age_ms;
         joints_.push_back(data_joint);
     }
 };

@@ -59,6 +59,51 @@
 // wait the subsequent ``read_hardware_values()`` can race the parser and return pos=0.
 #define ENABLE_ENCOS_CACHE_WAIT_US                5000                 ///< Microseconds to wait after ENCOS enable.
 
+// Servo-side CAN communication-loss protection. The DM TIMEOUT register (0x09) auto-disables
+// the motor (latched 0xD error) when no frame arrives within the window; the ENCOS heartbeat
+// window behaves equivalently. The window survives in DM servo RAM between runs while power
+// stays on, so DriverArx::enable() explicitly disarms it (writes DM_SERVO_CAN_TIMEOUT_DISARM)
+// right after each enable handshake, and DriverArx::arm_comm_loss_protection() asserts the
+// per-device policy in one pass right before the command stream starts.
+//
+// Policy (Device::wants_comm_loss_stop()): what "keep executing the last command" means on a
+// CAN loss depends on the command type. A stale velocity/torque command is a runaway -> the
+// window is ARMED so the servo hard-stops. A stale position command is the hold pose -> the
+// window is DISARMED so the servo keeps holding instead of collapsing detorqued.
+#define DM_SERVO_CAN_TIMEOUT_MS                   500                  ///< DM register 0x09 protection window (ms).
+#define ENCOS_SERVO_CAN_TIMEOUT_MS                500                  ///< ENCOS heartbeat protection window (ms).
+#define DM_TIMEOUT_COUNTS_PER_MS                  20                   ///< DM register 0x09 unit: 50 us per count.
+#define DM_SERVO_CAN_TIMEOUT_DISARM               0                    ///< DM register 0x09 value: protection off.
+#define ENCOS_SERVO_CAN_TIMEOUT_DISARM            0                    ///< ENCOS heartbeat value: protection off.
+
+// Pre-loop servo verification (Device::verify_servos_operational()): settle time after the
+// probe command so the asynchronous receive thread parses every fresh status response before
+// verify_operational() re-reads the cache.
+#define VERIFY_SERVOS_PROBE_WAIT_US               5000                 ///< Probe-response settle time (us).
+
+// RX-thread select() timeout. Bounds how long stop_reception() blocks waiting for the
+// reception thread to notice the stop flag; 1 s made every enable handshake (which stops and
+// restarts reception per servo) pay up to a second of dead time.
+#define RECEIVE_LOOP_SELECT_TIMEOUT_MS            100                  ///< RX-thread select() timeout (ms).
+
+// Controller-side CAN staleness watchdog (complements the servo-side protection windows): the
+// control loop compares the wall-clock age of each servo's most recent parsed status frame
+// (ReceivedServoData::last_update_perf_) against these thresholds. Used by BOTH the per-servo
+// path (ServoDm::read_hardware_values -> SAFE_MODE_SIG) and the bulk path
+// (DriverArx::group_read_hardware_values -> dead_servo_ids -> device recovery), so the two
+// detectors agree. INITIAL applies until the first frame has ever been parsed for the driver
+// (bus may still be coming up after the enable handshakes); NORMAL applies afterwards and
+// never relaxes back.
+#define ARX_STALE_FRAME_AGE_NORMAL_MS             10000                ///< Frame age (ms) before a known-alive servo is declared dead. 10 s.
+#define ARX_STALE_FRAME_AGE_INITIAL_MS            2500                 ///< Frame age (ms) for the start-up phase (before any frame has ever been parsed). 2.5 s.
+
+// Warn-only telemetry-stall diagnostic (DriverArx::group_read_hardware_values): a servo whose
+// newest frame is older than this gets one edge-triggered PI_WARN ("telemetry stalled") and one
+// on recovery ("resumed after N ms"). Far below the dead thresholds above on purpose -- the
+// point is to leave evidence in the node log for stalls that silently feed a cached position
+// to the policy but never trip the 10 s dead detector.
+#define ARX_STALL_WARN_AGE_MS                     250                  ///< Frame age (ms) that triggers the warn-only stall log.
+
 /*!
  * @enum Role
  * @brief Device roles in teleoperation.

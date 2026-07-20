@@ -158,6 +158,46 @@ def test_full_session_against_fake_servos(fake_bus, session_factory):
         assert fake_bus.frames_handled > 0
 
 
+def test_plain_follower_tracking_is_velocity_bounded(fake_bus, session_factory) -> None:
+    # Direct tracking (planning "None", no gravity comp) must still traverse a
+    # large command step at the synchronized follow_vel_max slew rate instead of
+    # handing the raw target to the PD loop in one stiff jump. Yam joint 0 has
+    # follow_vel_max=2.5 rad/s, so a 0.5 rad step takes ~0.2 s; the fake servo
+    # tracks MIT commands instantly, so the reported position IS the slewed
+    # command trajectory.
+    from openpi_control import PositionCommand
+
+    session, follower = session_factory()
+    with session:
+        session.connect()
+        state = follower.read_state(timeout_s=10.0)
+        assert abs(state.joints.position_rad[0]) < 0.01
+
+        target = 0.5
+        follower.command(PositionCommand([target, 0.0, 0.0, 0.0, 0.0, 0.0]))
+
+        start_time: float | None = None
+        arrival_time: float | None = None
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            position = follower.read_state(timeout_s=2.0).joints.position_rad[0]
+            now = time.monotonic()
+            if start_time is None and position > 0.05:
+                start_time = now
+            if position > target - 0.05:
+                arrival_time = now
+                break
+        assert start_time is not None, "joint 0 never started moving"
+        assert arrival_time is not None, "joint 0 never reached the commanded target"
+
+        # 0.4 rad between the two thresholds at 2.5 rad/s takes 0.16 s. Allow a
+        # generous lower margin for sampling jitter; an unslewed jump crosses
+        # both thresholds within one 100 Hz control tick and fails this bound.
+        traverse_s = arrival_time - start_time
+        assert traverse_s > 0.08, f"crossed 0.4 rad in {traverse_s * 1000:.0f} ms - no slew limit"
+        assert traverse_s < 2.0, f"took {traverse_s:.2f} s for 0.4 rad - far below follow_vel_max"
+
+
 def test_node_survives_command_burst(fake_bus, session_factory):
     from openpi_control import PositionCommand
 
@@ -1172,7 +1212,7 @@ def test_malformed_wire_messages_do_not_kill_the_node(fake_bus, session_factory)
         assert direct_pub is not None
         joint_info_type = 1  # MsgType::JOINT_INFO
         for msg_id in range(1, 21):
-            payload = JOINT_STRUCT.pack(*([0.0] * 50), msg_id, 32767, joint_info_type, 0.0)
+            payload = JOINT_STRUCT.pack(*([0.0] * 60), msg_id, 32767, joint_info_type, 0.0)
             direct_pub.send(payload)
             time.sleep(0.02)
 
@@ -1223,7 +1263,7 @@ def test_out_of_range_normalized_gripper_command_clamps(fake_bus_with_gripper):
         def send_gripper(normalized: float, msg_id: int) -> None:
             positions = joints + [normalized] + [0.0] * 3
             payload = JOINT_STRUCT.pack(
-                *(positions + [0.0] * 40),
+                *(positions + [0.0] * 50),
                 msg_id,
                 7,
                 1,

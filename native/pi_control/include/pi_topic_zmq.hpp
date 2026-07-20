@@ -20,6 +20,17 @@ class ZmqJointInfo {
     float joint_tor[10];          ///< Joint torques (Nm).
     float temperature[10];        ///< Joint temperatures (degrees Celsius).
     float idc_current[10];        ///< Estimated DC current for each joint (A).
+    /*!
+     * @brief Age of the newest hardware feedback frame backing each joint's
+     *        published position, in milliseconds (-1 = unknown/unsupported).
+     *
+     * The published positions come from a driver-side cache that the CAN RX
+     * thread refreshes; when frames stop arriving the cache silently repeats
+     * the last value. This field lets subscribers (Python evaluate loop)
+     * distinguish live telemetry from a stale cache. Kept before ``msg_id``
+     * so the trailing scalar layout matches the Python JOINT_STRUCT mirror.
+     */
+    float joint_age_ms[10];
     int32_t msg_id;                  ///< Unique message identifier for sequencing.
     int16_t joint_num;                ///< Number of active joints in this message.
     int16_t msg_type;                ///< Message type identifier.
@@ -59,7 +70,7 @@ class ZmqEffectorInfo {
     float param_float[30];     ///< Array of floating-point parameter values.
 };
 
-static_assert(sizeof(ZmqJointInfo) == 212, "ZmqJointInfo ABI changed");
+static_assert(sizeof(ZmqJointInfo) == 252, "ZmqJointInfo ABI changed");
 static_assert(sizeof(ZmqCommand) == 88, "ZmqCommand ABI changed");
 static_assert(sizeof(ZmqDeviceInfo) == 88, "ZmqDeviceInfo ABI changed");
 

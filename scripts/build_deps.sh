@@ -28,6 +28,24 @@ cppzmq_prefix="${cppzmq_source}/install"
 cppzmq_ref="${CPPZMQ_GIT_REF:-v4.9.0}"
 build_jobs="${BUILD_JOBS:-2}"
 
+# A cached clone built from a different pinned ref must not be reused
+# silently: fail fast with instructions instead.
+verify_cached_ref() {
+  local source_dir="$1"
+  local expected_ref="$2"
+  [[ -d "${source_dir}/.git" ]] || return 0
+  local actual_ref
+  actual_ref="$(git -C "${source_dir}" describe --tags --exact-match 2>/dev/null || echo unknown)"
+  if [[ "${actual_ref}" != "${expected_ref}" ]]; then
+    echo "Cached ${source_dir} is at ref '${actual_ref}' but '${expected_ref}' is pinned." >&2
+    echo "Remove it and re-run:  rm -rf ${source_dir}" >&2
+    exit 2
+  fi
+}
+
+verify_cached_ref "${pinocchio_source}" "${pinocchio_ref}"
+verify_cached_ref "${cppzmq_source}" "${cppzmq_ref}"
+
 if ! [[ "${build_jobs}" =~ ^[1-9][0-9]*$ ]]; then
   echo "BUILD_JOBS must be a positive integer; got ${build_jobs@Q}" >&2
   exit 2

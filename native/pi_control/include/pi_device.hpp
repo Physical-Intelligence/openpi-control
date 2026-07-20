@@ -203,6 +203,44 @@ class Device {
     virtual ReturnCode start(int baud_rate);
 
     /*!
+     * @brief Final servo error-state check after the whole start() sequence,
+     *        right before the control loop begins. The in-start()
+     *        verification can pass and a servo can still latch a
+     *        communication-loss error afterwards (e.g. a stale RAM
+     *        protection window expiring while a slow sibling servo was
+     *        enabling). Concrete devices probe for fresh status frames and
+     *        run the per-joint ``verify_operational()`` check (which
+     *        attempts one re-enable for DM servos) so a silently disabled
+     *        motor is caught before commands stream. Default: nothing to
+     *        verify.
+     * @return ReturnCode::SUCCESS when every servo is operational,
+     *         otherwise an error code.
+     */
+    virtual ReturnCode verify_servos_operational() { return ReturnCode::SUCCESS; }
+
+    /*!
+     * @brief Asserts the servo-side communication-loss policy for every
+     *        servo of this device (delegates to
+     *        ``Driver::arm_comm_loss_protection()``). Must be called once,
+     *        after ``verify_servos_operational()`` and immediately before
+     *        the command stream starts.
+     * @return ReturnCode::SUCCESS if successful, otherwise an error code.
+     */
+    ReturnCode arm_comm_loss_protection();
+
+    /*!
+     * @brief Policy for the servo-side communication-loss window: whether a
+     *        servo of this device must hard-stop (auto-disable) when command
+     *        frames stop arriving. A stale velocity/torque command is a
+     *        runaway -> stop; a stale position command is the hold pose ->
+     *        keep holding instead of collapsing detorqued. Followers are
+     *        position-commanded, leaders are torque-commanded (gravity
+     *        compensation), hence the role-based default.
+     * @return True when the protection window must be armed.
+     */
+    virtual bool wants_comm_loss_stop() { return role_ != Role::FOLLOWER; }
+
+    /*!
      * @brief Performs a single step in the device's control loop.
      * @return ReturnCode::SUCCESS if successful, otherwise an error code.
      */

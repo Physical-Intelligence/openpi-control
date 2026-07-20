@@ -81,7 +81,11 @@ def pack_state(positions: list[float], sequence: int, joint_count: int) -> bytes
     padded = positions + [0.0] * (10 - len(positions))
     zeros = [0.0] * 10
     temps = [25.0] * 10
-    return JOINT_STRUCT.pack(*padded, *zeros, *zeros, *temps, *zeros, sequence, joint_count, 1, 0.0)
+    # Fresh frames: report a small constant frame age for every joint.
+    ages = [2.0] * 10
+    return JOINT_STRUCT.pack(
+        *padded, *zeros, *zeros, *temps, *zeros, *ages, sequence, joint_count, 1, 0.0
+    )
 
 
 def main() -> int:

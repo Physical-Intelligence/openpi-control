@@ -17,7 +17,7 @@ from openpi_control.protocol import (
 
 
 def test_native_abi_sizes_match_natural_cpp_layout() -> None:
-    assert JOINT_STRUCT.size == 212
+    assert JOINT_STRUCT.size == 252
     assert COMMAND_STRUCT.size == 88
     assert STATUS_STRUCT.size == 88
 

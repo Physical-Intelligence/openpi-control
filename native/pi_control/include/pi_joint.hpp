@@ -168,6 +168,16 @@ class Joint {
     ReturnCode verify_position_fresh();
 
     /*!
+     * @brief Confirms every servo of the joint is in a healthy, enabled
+     *        state before the control loop starts. Delegates to
+     *        ``Servo::verify_operational()`` (which may attempt a one-shot
+     *        re-enable for a latched DM error).
+     * @return ReturnCode::SUCCESS when every servo is operational,
+     *         otherwise the first failing servo's error code.
+     */
+    ReturnCode verify_operational();
+
+    /*!
      * @brief Commands the joint's reference servo to hold at its currently
      *        measured position. Updates ``prev_target_pos_`` so the next
      *        ``move_to_ready_position()`` iteration starts incremental
@@ -285,6 +295,18 @@ class Joint {
             PI_ERROR("Servo is not initialized in get_tor_nm(): Joint%d", id_);
         }
         return servos_[reference_servo_index_]->get_tor_nm();
+    }
+
+    /*!
+     * @brief Age of the hardware frame backing the reference servo's position.
+     * @return Frame age in milliseconds, or -1 when unknown/untracked.
+     */
+    prof_time_msec_t get_frame_age_ms() {
+        if (servos_.size() == 0 || reference_servo_index_ >= (int)servos_.size()) {
+            PI_ERROR("Servo is not initialized in get_frame_age_ms(): Joint%d", id_);
+            return -1;
+        }
+        return servos_[reference_servo_index_]->get_frame_age_ms();
     }
 
     /*!

@@ -392,9 +392,21 @@ class EnableTransactionProbeDriverArx : public DriverArx {
     std::atomic<bool> overlap_detected_{false};
 };
 
+namespace {
+
+// handle_received_message is protected (invoked by the receive loop only);
+// expose it for direct exercise in tests.
+class DriverArxMessageProbe : public DriverArx {
+   public:
+    using DriverArx::DriverArx;
+    using DriverArx::handle_received_message;
+};
+
+}  // namespace
+
 TEST(DriverArxTransport, RejectsTruncatedReceivedFrames) {
     CommandLineArgs cla{};
-    DriverArx driver(nullptr, cla);
+    DriverArxMessageProbe driver(nullptr, cla);
     std::vector<uint8_t> truncated_frame(1);
 
     driver.handle_received_message(truncated_frame.data(), truncated_frame.size(), truncated_frame.size());

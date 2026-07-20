@@ -13,7 +13,10 @@ BASE_PORT = 8500
 PORT_RANGE = 1000
 MAX_JOINTS = 10
 
-JOINT_STRUCT = struct.Struct("@50fihhf")
+# Native ZmqJointInfo: pos/vel/tor/temp/idc_current[10] + joint_age_ms[10]
+# (frame age in ms, -1 = unknown), then msg_id, joint_num, msg_type,
+# measured_idc_current (see native/pi_control/include/pi_topic_zmq.hpp).
+JOINT_STRUCT = struct.Struct("@60fihhf")
 COMMAND_STRUCT = struct.Struct("@hhh10f10i")
 STATUS_STRUCT = struct.Struct("@hhh10f10i")
 # Native ZmqJoystickInfo: mode, side, channel[5], channel_num, button[5],

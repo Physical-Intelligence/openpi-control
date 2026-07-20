@@ -33,7 +33,7 @@ def test_native_arm_only_command_preserves_configured_effector() -> None:
     values = JOINT_STRUCT.unpack(backend._encode_joint_command(PositionCommand([0.1] * 6)))
 
     assert values[:7] == pytest.approx([0.1] * 6 + [0.75])
-    assert values[51] == 7
+    assert values[61] == 7
     backend.close()
 
 
