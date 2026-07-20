@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "openpi-control"
-version = "0.1.0"
+version = "0.1.1"
 description = "OpenPI native control runtime for YAM and ARX robot arms"
 readme = "README.md"
 requires-python = ">=3.11"
