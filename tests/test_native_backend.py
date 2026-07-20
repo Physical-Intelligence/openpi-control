@@ -122,6 +122,13 @@ def test_live_hardware_fault_preempts_state_timeout():
         backend.read_state(timeout_s=0.0)
 
 
+@pytest.fixture(autouse=True)
+def isolated_log_dir(tmp_path, monkeypatch):
+    """Keep node stdout tee files inside the test sandbox, not ~/openpi-data."""
+    monkeypatch.setenv("OPENPI_LOG_DIR", str(tmp_path / "logs"))
+    return tmp_path / "logs"
+
+
 @pytest.fixture
 def fake_node(tmp_path, monkeypatch):
     """Routes OPENPI_CONTROL_NODE at the protocol-faithful fake node."""
@@ -469,6 +476,38 @@ def test_full_lifecycle_against_fake_node(fake_node):
     finally:
         backend.close()
     assert backend._process is not None and backend._process.returncode == 0
+
+
+@spawn_tests
+def test_node_stdout_is_teed_to_persistent_log_file(fake_node, isolated_log_dir):
+    fake_node("normal")
+    backend = NativeArmBackend()
+    try:
+        backend.connect(
+            make_backend_config(), ArmRole.FOLLOWER, topics_for("t-tee", "native-test")
+        )
+    finally:
+        backend.close()
+
+    tee_path = isolated_log_dir / "pi_control_node__follower__native-test__Yam.log"
+    assert tee_path.is_file()
+    first_run_content = tee_path.read_text()
+    assert first_run_content
+
+    # A second run must rotate (preserve) the first run's file, not overwrite it.
+    try:
+        backend.connect(
+            make_backend_config(), ArmRole.FOLLOWER, topics_for("t-tee2", "native-test")
+        )
+    finally:
+        backend.close()
+    rotated = [
+        path
+        for path in isolated_log_dir.iterdir()
+        if path.name.startswith("pi_control_node__follower__native-test__Yam__")
+    ]
+    assert len(rotated) == 1
+    assert rotated[0].read_text() == first_run_content
 
 
 @spawn_tests

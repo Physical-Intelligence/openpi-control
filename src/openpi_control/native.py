@@ -15,9 +15,11 @@ from collections import deque
 from collections.abc import Iterable
 from importlib.resources import files
 from pathlib import Path
+from typing import TextIO
 
 import zmq
 
+from . import log_paths
 from .backend import ArmBackend
 from .config import ArmConfig, InputLayout, ResolvedArmAssets, SocketCanConnection
 from .exceptions import (
@@ -239,6 +241,7 @@ class NativeArmBackend(ArmBackend):
         self._heartbeat: threading.Thread | None = None
         self._heartbeat_stop = threading.Event()
         self._log_lines: deque[str] = deque(maxlen=200)
+        self._log_tee: TextIO | None = None
         self._reader_error: Exception | None = None
         self._hardware_fault_message: str | None = None
         self._paired_follower_state_topic = ""
@@ -279,6 +282,7 @@ class NativeArmBackend(ArmBackend):
             self._heartbeat = None
             self._heartbeat_stop = threading.Event()
             self._log_lines.clear()
+            self._log_tee = None
             self._reader_error = None
             self._hardware_fault_message = None
             self._ready = False
@@ -417,6 +421,14 @@ class NativeArmBackend(ArmBackend):
                     str(assets.effector_instance_config),
                 ]
             )
+        # Tee the node's stdout to a persistent per-arm log file so post-mortem
+        # debugging survives process exit (the in-memory ring buffer holds only
+        # the last 200 lines). Earlier runs are preserved via timestamp rename.
+        tee_path = log_paths.log_dir() / (
+            f"pi_control_node__{role.value}__{config.name}__{config.model}.log"
+        )
+        log_paths.rotate_existing(tee_path)
+        self._log_tee = tee_path.open("w", encoding="utf-8")
         self._process = subprocess.Popen(
             args,
             stdin=subprocess.DEVNULL,
@@ -472,6 +484,14 @@ class NativeArmBackend(ArmBackend):
                 if self._log_reader is not log_reader:
                     return
                 self._log_lines.append(line)
+                if self._log_tee is not None and not self._log_tee.closed:
+                    try:
+                        self._log_tee.write(line)
+                        self._log_tee.flush()
+                    except OSError:
+                        # Disk-full or revoked mount must not take down the
+                        # control path; the ring buffer still captures the tail.
+                        self._log_tee = None
                 if message is not None:
                     self._hardware_fault_message = message
                     self._condition.notify_all()
@@ -1009,6 +1029,13 @@ class NativeArmBackend(ArmBackend):
             self._reader.join()
         if self._log_reader and self._log_reader.is_alive():
             self._log_reader.join(timeout=1)
+        with self._condition:
+            if self._log_tee is not None:
+                try:
+                    self._log_tee.close()
+                except OSError as exc:
+                    cleanup_errors.append(exc)
+                self._log_tee = None
         process_stdout = getattr(self._process, "stdout", None)
         if process_stdout:
             try:
