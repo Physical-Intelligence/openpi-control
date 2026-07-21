@@ -42,6 +42,7 @@ class PassiveEncoderRoute {
    public:
     int encoder_id_;   ///< Encoder request CAN id (the report arrives on the map key).
     int data_index_;   ///< Cache slot in received_servo_data_ for this encoder.
+    bool firmware_compat_ = false;  ///< Tolerate multiple teaching-handle firmware revisions during EEPROM/frequency setup (config ``passive_encoder_firmware_compat``). Default false = single-format setup.
 };
 
 /*!
@@ -146,9 +147,12 @@ class DriverArx : public DriverCan {
      * @param response_can_id CAN id the encoder answers on.
      * @param encoder_id Encoder request CAN id.
      * @param data_index Cache slot in received_servo_data_ for this encoder.
+     * @param firmware_compat Tolerate multiple teaching-handle firmware revisions during
+     *        EEPROM/frequency setup (config ``passive_encoder_firmware_compat``; default false).
      * @return ReturnCode::SUCCESS, or INVALID_PARAM for an out-of-range data index.
      */
-    ReturnCode register_passive_encoder(int response_can_id, int encoder_id, int data_index);
+    ReturnCode register_passive_encoder(int response_can_id, int encoder_id, int data_index,
+                                        bool firmware_compat = false);
 
     /*!
      * @brief Snapshots the cached state of a polled passive encoder.
@@ -185,9 +189,10 @@ class DriverArx : public DriverCan {
     /*!
      * @brief Validates firmware and EEPROM frequencies for one passive encoder.
      * @param request_can_id CAN id used for encoder configuration requests.
+     * @param firmware_compat Tolerate multiple teaching-handle firmware revisions (default false).
      * @return ReturnCode::SUCCESS when the encoder is ready for passive polling.
      */
-    ReturnCode configure_passive_encoder(int request_can_id);
+    ReturnCode configure_passive_encoder(int request_can_id, bool firmware_compat);
 
     /*!
      * @brief Sends a configuration request to a passive encoder.
@@ -202,14 +207,21 @@ class DriverArx : public DriverCan {
 
     /*!
      * @brief Reads one passive-encoder EEPROM byte.
+     * @param firmware_compat When true, accept both the <=2.2.x READINGS (0x86, 5-byte) and
+     *        >=2.3.x GET_EEPROM (0x87, 3-byte) reply formats; when false, require the single
+     *        READINGS format (original behavior).
      */
-    ReturnCode read_passive_encoder_eeprom(int request_can_id, uint8_t device, uint8_t offset, uint8_t* p_value);
+    ReturnCode read_passive_encoder_eeprom(int request_can_id, uint8_t device, uint8_t offset, uint8_t* p_value,
+                                           bool firmware_compat);
 
     /*!
      * @brief Reads a low/high EEPROM frequency pair.
+     * @param firmware_compat When true, fall back to the 8-bit low byte if the 16-bit high-byte
+     *        offset is unimplemented (legacy <=2.2.12 EEPROM layout); when false, a missing high
+     *        byte is an error (original behavior).
      */
     ReturnCode read_passive_encoder_frequency(int request_can_id, uint8_t device, uint8_t high_offset,
-                                              uint8_t low_offset, int* p_frequency);
+                                              uint8_t low_offset, int* p_frequency, bool firmware_compat);
 
     /*!
      * @brief Drains frames queued by startup validation before reception starts.
