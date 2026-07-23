@@ -36,7 +36,7 @@ _POST_ZERO_SETTLE_S = 0.5
 
 
 def set_zero(bus: can.BusABC, servo_id: int) -> str | None:
-    """Set the current position as firmware zero; returns None on success, error detail otherwise."""
+    """Set the current position as firmware zero; None on success, error detail otherwise."""
     # 1. Enable (wake) with a zero-gain MIT frame — exerts no torque; its ack
     #    also proves the servo is powered and reachable.
     bus.send(can.Message(arbitration_id=servo_id, data=_MIT_IDLE_PAYLOAD, is_extended_id=False))
@@ -57,7 +57,10 @@ def set_zero(bus: can.BusABC, servo_id: int) -> str | None:
     time.sleep(_POST_ZERO_SETTLE_S)
 
     # 4. Return to the disabled state (verified robot-test sequence); drain the ack.
-    bus.send(can.Message(arbitration_id=servo_id, data=bytes([_CMD_DISABLE, 0, 0]), is_extended_id=False))
+    disable = can.Message(
+        arbitration_id=servo_id, data=bytes([_CMD_DISABLE, 0, 0]), is_extended_id=False
+    )
+    bus.send(disable)
     buses.recv_from(bus, (servo_id,), _DISABLE_ACK_TIMEOUT_S)
 
     if not zeroed:

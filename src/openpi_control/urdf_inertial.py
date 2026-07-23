@@ -31,7 +31,9 @@ _ZERO_MASS_DATA: dict[str, object] = {
 }
 
 
-def prepare_merged_urdf(assets: ResolvedArmAssets, *, model: str, effector_model: str | None) -> Path:
+def prepare_merged_urdf(
+    assets: ResolvedArmAssets, *, model: str, effector_model: str | None
+) -> Path:
     """Create (or reuse) the effector-mass-merged URDF for a resolved arm.
 
     Reads the base URDF from ``assets.urdf`` and the effector mass model from
@@ -151,7 +153,9 @@ def _fmt(value: float, precision: int = 12) -> str:
     return "0" if text in ("-0", "-0.0") else text
 
 
-def _make_inertial_xml(indent: str, mass: float, com: list[float], inertia: dict[str, float]) -> str:
+def _make_inertial_xml(
+    indent: str, mass: float, com: list[float], inertia: dict[str, float]
+) -> str:
     """Construct the <inertial> XML block with the given indentation."""
     pad = indent
     pad2 = indent + "  "

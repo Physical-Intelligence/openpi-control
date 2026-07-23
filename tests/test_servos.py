@@ -80,7 +80,8 @@ def test_encos_zero_full_sequence() -> None:
         ]
     )
     assert encos_can.set_zero(bus, servo_id) is None
-    assert [message.arbitration_id for message in bus.sent] == [servo_id, _ENCOS_BROADCAST_ID, servo_id]
+    sent_ids = [message.arbitration_id for message in bus.sent]
+    assert sent_ids == [servo_id, _ENCOS_BROADCAST_ID, servo_id]
 
 
 def test_encos_zero_accepts_broadcast_ack() -> None:

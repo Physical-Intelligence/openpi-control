@@ -33,7 +33,8 @@ def check_interface(port_type: str, interface: str) -> str | None:
         if pathlib.Path(f"/sys/class/net/{interface}").exists():
             return None
         return (
-            f"CAN interface {interface!r} does not exist. Plug in the adapter and check the names with run/devices.sh."
+            f"CAN interface {interface!r} does not exist. "
+            "Plug in the adapter and check the names with run/devices.sh."
         )
     if port_type == PORT_TYPE_SERIAL:
         if pathlib.Path(interface).exists():
@@ -42,7 +43,9 @@ def check_interface(port_type: str, interface: str) -> str | None:
             f"serial device {interface!r} does not exist. Plug in the adapter and "
             "check the names with run/devices.sh (ls /dev/serial/by-id)."
         )
-    raise SystemExit(f"unknown port type {port_type!r}; supported: {PORT_TYPE_CAN}, {PORT_TYPE_SERIAL}")
+    raise SystemExit(
+        f"unknown port type {port_type!r}; supported: {PORT_TYPE_CAN}, {PORT_TYPE_SERIAL}"
+    )
 
 
 @contextlib.contextmanager
@@ -59,7 +62,9 @@ def open_bus(port_type: str, interface: str) -> Iterator[can.BusABC]:
             "handling from robot-test pi_control/servos/dxl_serial.py when the first "
             "serial servo family is brought up"
         )
-    raise SystemExit(f"unknown port type {port_type!r}; supported: {PORT_TYPE_CAN}, {PORT_TYPE_SERIAL}")
+    raise SystemExit(
+        f"unknown port type {port_type!r}; supported: {PORT_TYPE_CAN}, {PORT_TYPE_SERIAL}"
+    )
 
 
 def recv_from(bus: can.BusABC, expected_ids: tuple[int, ...], timeout_s: float) -> bool:

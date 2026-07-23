@@ -24,7 +24,7 @@ _POST_ZERO_SETTLE_S = 0.5
 
 
 def set_zero(bus: can.BusABC, servo_id: int) -> str | None:
-    """Set the current position as firmware zero; returns None on success, error detail otherwise."""
+    """Set the current position as firmware zero; None on success, error detail otherwise."""
     bus.send(can.Message(arbitration_id=servo_id, data=_ZERO_PAYLOAD, is_extended_id=False))
     if bus.recv(timeout=_RESPONSE_TIMEOUT_S) is None:
         return "no acknowledgement"
