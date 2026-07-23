@@ -212,6 +212,7 @@ class NativeArmBackend(ArmBackend):
         self._process: subprocess.Popen[str] | None = None
         self._parent_liveness_write_fd: int | None = None
         self._config: ArmConfig | None = None
+        self._joint_names: tuple[str, ...] = ()
         self._role: ArmRole | None = None
         self._topics: ArmTopics | None = None
         self._state_sub: _Subscriber | None = None
@@ -333,6 +334,14 @@ class NativeArmBackend(ArmBackend):
         assets: ResolvedArmAssets,
     ) -> ArmCapabilities:
         self._config, self._role, self._topics = config, role, topics
+        # Resolved once: joint_names() re-resolves the packaged model assets
+        # (several stat() calls plus a JSON read). The reader thread needs the
+        # names for every 100-200 Hz state message WHILE HOLDING the condition
+        # lock, so per-message resolution turns the lock into a convoy that can
+        # starve the other threads (observed: the 1 Hz heartbeat sender never
+        # got the lock again, so the node's dead-client watchdog never armed).
+        self._joint_names = ()
+        self._joint_names = self._resolved_joint_names()
         self._input_layout = config.input_layout() if role is ArmRole.LEADER else InputLayout()
         # The gravity model must see the effector inertia exactly once: hand the
         # node a merged URDF whose end link inertial is replaced with the effector
@@ -497,17 +506,25 @@ class NativeArmBackend(ArmBackend):
                 if self._log_reader is not log_reader:
                     return
                 self._log_lines.append(line)
-                if self._log_tee is not None and not self._log_tee.closed:
-                    try:
-                        self._log_tee.write(line)
-                        self._log_tee.flush()
-                    except OSError:
-                        # Disk-full or revoked mount must not take down the
-                        # control path; the ring buffer still captures the tail.
-                        self._log_tee = None
+                tee = self._log_tee
                 if message is not None:
                     self._hardware_fault_message = message
                     self._condition.notify_all()
+            # Tee I/O stays OUTSIDE the condition lock: the node floods stdout
+            # during startup, and a flushed disk write per line while holding
+            # the lock convoys every other lock user (observed: the 1 Hz
+            # heartbeat sender starved through the whole startup window, so
+            # the node never armed its dead-client watchdog). The tee handle
+            # is only ever written by this thread.
+            if tee is not None and not tee.closed:
+                try:
+                    tee.write(line)
+                    tee.flush()
+                except OSError:
+                    # Disk-full or revoked mount must not take down the
+                    # control path; the ring buffer still captures the tail.
+                    with self._condition:
+                        self._log_tee = None
 
     def _raise_if_hardware_fault(self) -> None:
         if self._hardware_fault_message is not None:
@@ -594,13 +611,26 @@ class NativeArmBackend(ArmBackend):
             stalled_s,
         )
 
+    def _resolved_joint_names(self) -> tuple[str, ...]:
+        """Joint names, resolved from the model assets once and cached.
+
+        joint_names() re-resolves the packaged model assets on every call
+        (several stat() calls plus a JSON read); the consumers below need the
+        names for every 100-200 Hz state message while holding the condition
+        lock, so per-message resolution turns the lock into a convoy.
+        """
+        if not self._joint_names and self._config is not None:
+            self._joint_names = self._config.joint_names()
+        return self._joint_names
+
     def _consume_state(self, payload: bytes) -> None:
         if len(payload) != JOINT_STRUCT.size:
             raise ProtocolError(f"invalid joint payload size {len(payload)}")
         assert self._config is not None and self._role is not None
         values = JOINT_STRUCT.unpack(payload)
         joint_count = int(values[61])
-        arm_dof = len(self._config.joint_names())
+        names = self._resolved_joint_names()
+        arm_dof = len(names)
         if joint_count < arm_dof:
             raise ProtocolError(
                 f"native state has {joint_count} joints; expected at least {arm_dof}"
@@ -635,7 +665,7 @@ class NativeArmBackend(ArmBackend):
                 name=self._config.name,
                 role=self._role,
                 joints=JointState(
-                    names=self._config.joint_names(),
+                    names=names,
                     position_rad=positions,
                     velocity_rad_s=velocities,
                     effort_nm=efforts,
@@ -695,7 +725,7 @@ class NativeArmBackend(ArmBackend):
                 self._capabilities = ArmCapabilities(
                     protocol_version=PROTOCOL_VERSION,
                     model=self._config.model,
-                    joint_names=self._config.joint_names(),
+                    joint_names=self._resolved_joint_names(),
                     has_effector=self._config.effector_model is not None,
                     supports_direct_commands=bool(flags & CAP_DIRECT),
                     supports_live_input=bool(flags & CAP_LIVE_INPUT),
@@ -744,7 +774,7 @@ class NativeArmBackend(ArmBackend):
         drops to a safe idle (leader: gravity float; follower: pause + hold)
         after 5 s of silence -- so an abrupt client death (kill -9, host crash)
         no longer leaves the pair teleoperating unsupervised. Sends share the
-        condition lock with _send_lifecycle: ZMQ sockets are not thread-safe.
+        lifecycle lock with _send_lifecycle: ZMQ sockets are not thread-safe.
         """
         payload = encode_command(NativeCommand.HEARTBEAT)
         heartbeat = threading.current_thread()
@@ -755,7 +785,17 @@ class NativeArmBackend(ArmBackend):
             pub = self._lifecycle_pub
 
         while not stop.is_set():
-            with self._condition:
+            # The lifecycle lock (not the backend condition) serializes the
+            # socket against _send_lifecycle: it is the only mutual exclusion
+            # the ZMQ socket needs, and it is nearly uncontended. Waiting on
+            # the busy backend condition here let a loaded host starve the
+            # 1 Hz cadence for tens of seconds, so the node could go a whole
+            # session without seeing a heartbeat and never arm its dead-client
+            # watchdog. The liveness flags are read without the condition:
+            # attribute reads are atomic, and the worst case -- one extra
+            # heartbeat racing teardown -- ends in the send raising on the
+            # closed socket, which exits the loop.
+            with self._lifecycle_lock:
                 if self._heartbeat is not heartbeat or pub is None or not self._running:
                     return
                 try:
