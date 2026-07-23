@@ -68,6 +68,8 @@
 #define OPT_EFFECTOR_MODEL_CONFIG                 "effector_model_config"
 #define OPT_EFFECTOR_INSTANCE_CONFIG              "effector_instance_config"
 #define OPT_URDF_PATH                             "urdf_path"
+// Read end of the supervising Python process's lifeline pipe.
+#define OPT_PARENT_LIVENESS_FD                    "parent_liveness_fd"
 
 
 // Unified move-to-ready / emergency-recovery options. Every "move to ready" path (startup,
@@ -138,6 +140,7 @@ class CommandLineArgs {
     std::string effector_model_config;
     std::string effector_instance_config;
     std::string urdf_path;
+    int parent_liveness_fd = -1;  ///< Inherited lifeline pipe; EOF means the Python owner exited.
 
     // Unified move-to-ready / emergency-recovery options. See macros above for descriptions.
     float move_to_ready_vel_rad_s_normal; ///< Healthy move-to-ready angular speed (rad/s).
