@@ -800,6 +800,7 @@ class NativeArmBackend(ArmBackend):
                     return
                 try:
                     pub.send(payload)
+                    self._debug_heartbeats_sent = getattr(self, "_debug_heartbeats_sent", 0) + 1
                 except Exception:  # noqa: BLE001 - socket closing under us is a normal exit
                     return
             if stop.wait(1.0):

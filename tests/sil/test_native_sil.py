@@ -1503,6 +1503,11 @@ def test_dead_client_watchdog_idles_the_node(fake_bus, session_factory):
         follower.read_state(timeout_s=10.0)
 
         backend = follower._backend  # noqa: SLF001 - simulating client death
+        print(
+            f"[WDBG-CLIENT] pre-stop: alive={backend._heartbeat.is_alive()} "
+            f"sent={getattr(backend, '_debug_heartbeats_sent', 0)}",
+            flush=True,
+        )
         backend._heartbeat_stop.set()
         assert backend._heartbeat is not None
         backend._heartbeat.join(timeout=5.0)
