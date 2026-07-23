@@ -4,6 +4,8 @@
  * device control and management.
  */
 
+#include <unistd.h>
+
 #include <cmath>
 
 #include "pi_device_effector.hpp"
@@ -94,6 +96,59 @@ ReturnCode DeviceEffector::park_safely() {
     return first_error;
 }
 
+ReturnCode DeviceEffector::verify_servos_operational() {
+    if (is_read_only()) {
+        return ReturnCode::SUCCESS;
+    }
+
+    // Mirror DeviceArm::verify_servos_operational(): probe with a re-send of the last
+    // commanded target so every servo answers with a fresh status frame, then verify.
+    const auto failed_ids = failed_joint_ids_snapshot();
+    bool any_probe_sent = false;
+    for (auto& p_joint : joints_) {
+        const int16_t sid = p_joint->reference_servo_id();
+        if (sid >= 0 && failed_ids.count(sid) != 0) {
+            continue;
+        }
+        ReturnCode probe_rc = p_joint->move(p_joint->prev_target_pos_);
+        if (probe_rc != ReturnCode::SUCCESS) {
+            PI_ERROR("%s_%s: joint id=%d pre-loop verification probe failed (rc=%d)",
+                     model_.c_str(), id_.c_str(), p_joint->id_, static_cast<int>(probe_rc));
+            return probe_rc;
+        }
+        any_probe_sent = true;
+    }
+    if (any_probe_sent) {
+        // Flush the probe to the bus (see DeviceArm::verify_servos_operational). Called on
+        // the driver directly because write_hardware_values() skips the group write when the
+        // effector shares an arm-owned driver.
+        if (p_driver_ != nullptr) {
+            ReturnCode flush_rc = p_driver_->group_write_hardware_values();
+            if (flush_rc != ReturnCode::SUCCESS) {
+                PI_ERROR("%s_%s: pre-loop verification probe flush failed (rc=%d)",
+                         model_.c_str(), id_.c_str(), static_cast<int>(flush_rc));
+                return flush_rc;
+            }
+        }
+        usleep(VERIFY_SERVOS_PROBE_WAIT_US);
+    }
+
+    for (auto& p_joint : joints_) {
+        const int16_t sid = p_joint->reference_servo_id();
+        if (sid >= 0 && failed_ids.count(sid) != 0) {
+            continue;
+        }
+        ReturnCode return_code = p_joint->verify_operational();
+        if (return_code != ReturnCode::SUCCESS) {
+            PI_ERROR("%s_%s: joint id=%d failed pre-loop servo error-state verification (rc=%d); refusing to run",
+                     model_.c_str(), id_.c_str(), p_joint->id_, static_cast<int>(return_code));
+            return return_code;
+        }
+    }
+
+    return ReturnCode::SUCCESS;
+}
+
 ReturnCode DeviceEffector::start(int baud_rate) {
     ReturnCode return_code = Device::start(baud_rate);
     if (return_code != ReturnCode::SUCCESS) {
@@ -129,6 +184,23 @@ ReturnCode DeviceEffector::start(int baud_rate) {
     // read-only teaching handles skip this block entirely; their write_hardware_values() and
     // move_to_ready_position() already short-circuit on is_read_only().
     if (is_read_only() == false) {
+        // Mirror DeviceArm::start(): refuse to stream commands into a servo with a
+        // latched error state (silently disabled motor). One re-enable is attempted
+        // inside verify_operational() before failing.
+        const auto failed_before_verify = failed_joint_ids_snapshot();
+        for (auto& p_joint : joints_) {
+            const int16_t sid = p_joint->reference_servo_id();
+            if (sid >= 0 && failed_before_verify.count(sid) != 0) {
+                continue;
+            }
+            return_code = p_joint->verify_operational();
+            if (return_code != ReturnCode::SUCCESS) {
+                PI_ERROR("%s_%s: joint id=%d failed servo error-state verification (rc=%d); aborting start",
+                         model_.c_str(), id_.c_str(), p_joint->id_, static_cast<int>(return_code));
+                return fail_after_partial_start(return_code);
+            }
+        }
+
         const auto failed_before_hold = failed_joint_ids_snapshot();
         bool any_hold_sent = false;
         for (auto& p_joint : joints_) {
@@ -729,7 +801,8 @@ ReturnCode DeviceEffector::get_observation(MsgJoints& msg) {
         msg.add_joint_info(get_normalized_gripper_position(p_joint.get()),
                            p_joint->get_vel_rad_sec(), p_joint->get_tor_nm(),
                            p_joint->get_temperature(),
-                           p_joint->get_idc_current());
+                           p_joint->get_idc_current(),
+                           static_cast<float>(p_joint->get_frame_age_ms()));
     }
 
     return return_code;

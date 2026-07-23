@@ -35,6 +35,23 @@ def test_state_freshness_uses_monotonic_time() -> None:
     assert not state.is_fresh(0.01)
 
 
+def test_joint_state_frame_age_defaults_to_unknown_and_validates_size() -> None:
+    joints = JointState(("a", "b"), [0, 0], [0, 0], [0, 0], [20, 20], [0, 0])
+    assert joints.frame_age_ms is not None
+    assert joints.frame_age_ms.tolist() == [-1.0, -1.0]
+
+    explicit = JointState(
+        ("a", "b"), [0, 0], [0, 0], [0, 0], [20, 20], [0, 0], frame_age_ms=[3.0, 250.0]
+    )
+    assert explicit.frame_age_ms is not None
+    assert explicit.frame_age_ms.tolist() == [3.0, 250.0]
+
+    with pytest.raises(ConfigurationError):
+        JointState(("a", "b"), [0, 0], [0, 0], [0, 0], [20, 20], [0, 0], frame_age_ms=[3.0])
+
+    assert EffectorState(0.5).frame_age_ms == -1.0
+
+
 def test_command_and_effector_validation() -> None:
     with pytest.raises(ConfigurationError):
         PositionCommand([float("nan")])

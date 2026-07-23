@@ -13,6 +13,7 @@
 #include <net/if.h>
 #include <sys/socket.h>
 
+#include "pi_control.hpp"
 #include "pi_driver_can.hpp"
 
 // ----------------------------------------------------------------------------
@@ -184,8 +185,12 @@ void DriverCan::receive_loop(const callback_t& callback) {
         FD_ZERO(&read_fds);
         FD_SET(sock_, &read_fds);
 
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
+        // Short timeout bounds how long stop_reception() blocks waiting for
+        // this thread to notice the stop flag (the enable handshake stops and
+        // restarts reception per servo, so a 1 s timeout added up to a second
+        // of dead time per enable).
+        timeout.tv_sec = 0;
+        timeout.tv_usec = RECEIVE_LOOP_SELECT_TIMEOUT_MS * 1000;
 
         int ret = select(sock_ + 1, &read_fds, nullptr, nullptr, &timeout);
         if (ret < 0) {

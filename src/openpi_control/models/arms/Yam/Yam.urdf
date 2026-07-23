@@ -149,8 +149,9 @@
   <!-- Link end_link -->
   <link name="end_link">
     <!-- Massless flange, mirroring i2rt's bare-arm link6 (mass 1e-6): the
-         attached effector's inertia comes from its <effector_model>_mass.json
-         via AlgoPino::append_effector_mass. The crank-gripper inertial that
+         attached effector's inertia comes from its <effector_model>_mass.json,
+         merged into this inertial block by openpi_control.urdf_inertial before
+         the native node parses the URDF. The crank-gripper inertial that
          used to be baked in here double-counted the gripper for followers
          (E_Yam_mass.json added the same 0.60366 kg again) and saddled leaders
          with a gripper they don't carry (the 0.258 kg teaching handle). -->

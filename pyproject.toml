@@ -4,13 +4,15 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "openpi-control"
-version = "0.1.0"
+version = "0.1.1"
 description = "OpenPI native control runtime for YAM and ARX robot arms"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "OpenPI Control maintainers" }]
 dependencies = [
   "numpy>=1.26",
+  # Direct CAN access for the servo zeroing registry (openpi_control.servos).
+  "python-can>=4.3",
   "pyzmq>=25",
 ]
 
@@ -30,6 +32,7 @@ wheel.install-dir = ""
 sdist.include = [
   "native/**",
   "src/openpi_control/models/**",
+  "src/openpi_control/arm_commands/**",
   "tests/**",
   "scripts/**",
 ]

@@ -6,7 +6,6 @@
 #include <Eigen/Core>
 #include <cmath>
 #include <cstring>
-#include <fstream>
 #include <pinocchio/algorithm/frames.hpp>
 #include <pinocchio/algorithm/jacobian.hpp>
 #include <pinocchio/algorithm/joint-configuration.hpp>
@@ -18,7 +17,6 @@
 #include <pinocchio/spatial/se3.hpp>
 #include <vector>
 
-#include "json/json.hpp"
 #include "pi_command_line_args.hpp"
 #include "pi_device.hpp"
 #include "pi_algo_pino.hpp"
@@ -91,11 +89,8 @@ ReturnCode AlgoPino::init(const DeviceConfig* p_config_model, const DeviceConfig
                 pos_oMf(0), pos_oMf(1), pos_oMf(2), diff);
     }
 
-    return_code = append_effector_mass(cla);
-    if (return_code != ReturnCode::SUCCESS) {
-        return return_code;
-    }
-
+    // Effector inertia is already merged into the URDF's end link by the Python
+    // launcher (openpi_control.urdf_inertial), so the model is complete as parsed.
     model_.gravity.linear() = Eigen::Vector3d(0, 0, -9.81);
     model_.gravity.angular() = Eigen::Vector3d::Zero();
 
@@ -112,63 +107,6 @@ ReturnCode AlgoPino::init(const DeviceConfig* p_config_model, const DeviceConfig
 
     PI_INFO("Algo", InfoLevel::ESSENTIAL_0, "Gravity vector after rotation: %f, %f, %f", model_.gravity.linear()(0),
             model_.gravity.linear()(1), model_.gravity.linear()(2));
-
-    return ReturnCode::SUCCESS;
-}
-
-ReturnCode AlgoPino::append_effector_mass(const CommandLineArgs& cla) {
-    if (cla.effector_model_config.empty() || cla.effector_model_config == OPT_DEFAULT_NONE) {
-        return ReturnCode::SUCCESS;
-    }
-    const std::string suffix = ".json";
-    std::string mass_path = cla.effector_model_config;
-    if (mass_path.size() <= suffix.size() ||
-        mass_path.compare(mass_path.size() - suffix.size(), suffix.size(), suffix) != 0) {
-        PI_WARN("Effector model config '%s' has no .json suffix; skipping effector mass model",
-                mass_path.c_str());
-        return ReturnCode::SUCCESS;
-    }
-    mass_path = mass_path.substr(0, mass_path.size() - suffix.size()) + "_mass.json";
-
-    std::ifstream mass_file(mass_path);
-    if (!mass_file.is_open()) {
-        PI_INFO("Algo", InfoLevel::ESSENTIAL_0,
-                "No effector mass model at %s; gravity model covers the bare arm only",
-                mass_path.c_str());
-        return ReturnCode::SUCCESS;
-    }
-
-    try {
-        json mass_json = json::parse(mass_file);
-        const double mass = mass_json.at("mass").get<double>();
-        const auto& com_json = mass_json.at("center_of_mass");
-        const auto& inertia_json = mass_json.at("inertia");
-        Eigen::Vector3d com(com_json.at(0).get<double>(), com_json.at(1).get<double>(),
-                            com_json.at(2).get<double>());
-        Eigen::Matrix3d rotational_inertia;
-        const double ixx = inertia_json.at("ixx").get<double>();
-        const double iyy = inertia_json.at("iyy").get<double>();
-        const double izz = inertia_json.at("izz").get<double>();
-        const double ixy = inertia_json.at("ixy").get<double>();
-        const double ixz = inertia_json.at("ixz").get<double>();
-        const double iyz = inertia_json.at("iyz").get<double>();
-        rotational_inertia << ixx, ixy, ixz, ixy, iyy, iyz, ixz, iyz, izz;
-
-        // The mass model is expressed in the effector mount frame (the URDF's end
-        // link); transform onto the supporting joint before adding so RNEA sees
-        // the load where it physically hangs.
-        const auto& frame = model_.frames[end_link_index_];
-        const pinocchio::Inertia effector_inertia(mass, com, pinocchio::Symmetric3(rotational_inertia));
-        model_.inertias[frame.parentJoint] += frame.placement.act(effector_inertia);
-        data_ = pinocchio::Data(model_);
-
-        PI_INFO("Algo", InfoLevel::ESSENTIAL_0,
-                "Added effector mass model to gravity model: %.3f kg at %s (from %s)",
-                mass, frame.name.c_str(), mass_path.c_str());
-    } catch (const std::exception& e) {
-        PI_ERROR("Failed to load effector mass model '%s': %s", mass_path.c_str(), e.what());
-        return ReturnCode::INVALID_PARAM;
-    }
 
     return ReturnCode::SUCCESS;
 }

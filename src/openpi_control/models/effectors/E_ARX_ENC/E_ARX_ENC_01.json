@@ -1,0 +1,33 @@
+{
+    "config_version": "1.1.1",
+    "device_model": "E_ARX_ENC",
+    "device_type": "effector",
+    "effector_type": "arx",
+    "spring_effect": false,
+    "control_mode": "torque",
+    "dist_to_torque_const": 2.0,
+    "base_rpy": [
+        0,
+        0,
+        0
+    ],
+    "rpy_invert": [
+        1,
+        1,
+        1
+    ],
+    "joints": [
+        {
+            "joint_id": 6,
+            "reference_servo_index": 0,
+            "servos": [
+                {
+                    "servo_id": 1543,
+                    "zero_pos": 0,
+                    "home_pos": 0,
+                    "spring_home_pos": 0
+                }
+            ]
+        }
+    ]
+}

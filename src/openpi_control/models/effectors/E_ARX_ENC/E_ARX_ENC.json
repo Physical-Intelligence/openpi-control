@@ -1,0 +1,59 @@
+{
+    "config_version": "1.1.1",
+    "device_model": "E_ARX_ENC",
+    "device_type": "effector",
+    "effector_type": "arx",
+    "topic_type": "ROS",
+    "driver_type": "CAN_ENCODER",
+    "algo_type": "Algo",
+    "planning_type": "None",
+    "read_only": true,
+    "catalog": {
+        "display_label": "E_ARX_ENC: Arx Encoder Gripper (read-only)",
+        "order": 8,
+        "baudrate": 1000000,
+        "need_repeated_command": false
+    },
+    "joints": [
+        {
+            "joint_id": 6,
+            "vel_max": 3.0,
+            "torq_min": -7,
+            "torq_max": 7,
+            "safe_torq_min": 0,
+            "safe_torq_max": 0,
+            "torq_rescale": 1,
+            "pos_rescale": 1,
+            "pos_error_margin": 0.1,
+            "pos_max_safety_margin": 0.2,
+            "safe_mode_derating": 0.2,
+            "accel_max": 1.0,
+            "spring_constant": 0.0,
+            "spring_preload": 0.0,
+            "spring_force_config": false,
+            "spring_type": -1,
+            "threshold_angle_change": 0.00872664625997165,
+            "threshold_time_sec": 0.3,
+            "max_length": 0.07,
+            "spring_invert": false,
+            "servos": [
+                {
+                    "servo_model": "ARX Remote Encoder",
+                    "servo_id": 1543,
+                    "data_index": 6,
+                    "dir_invert": 1,
+                    "reverse_flag": false,
+                    "pos_max": 1.2379,
+                    "pos_min": 0,
+                    "response_delay": 0.025,
+                    "kT": 1,
+                    "kA": 1,
+                    "kV": 1,
+                    "pos_kp": 0,
+                    "pos_ki": 0,
+                    "pos_kd": 0
+                }
+            ]
+        }
+    ]
+}

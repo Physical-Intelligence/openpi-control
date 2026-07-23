@@ -9,10 +9,12 @@ message-consumption tests below them run everywhere.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import pytest
@@ -118,6 +120,13 @@ def test_live_hardware_fault_preempts_state_timeout():
 
     with pytest.raises(HardwareFaultError, match="motor coil overtemperature"):
         backend.read_state(timeout_s=0.0)
+
+
+@pytest.fixture(autouse=True)
+def isolated_log_dir(tmp_path, monkeypatch):
+    """Keep node stdout tee files inside the test sandbox, not ~/openpi-data."""
+    monkeypatch.setenv("OPENPI_LOG_DIR", str(tmp_path / "logs"))
+    return tmp_path / "logs"
 
 
 @pytest.fixture
@@ -470,6 +479,38 @@ def test_full_lifecycle_against_fake_node(fake_node):
 
 
 @spawn_tests
+def test_node_stdout_is_teed_to_persistent_log_file(fake_node, isolated_log_dir):
+    fake_node("normal")
+    backend = NativeArmBackend()
+    try:
+        backend.connect(
+            make_backend_config(), ArmRole.FOLLOWER, topics_for("t-tee", "native-test")
+        )
+    finally:
+        backend.close()
+
+    tee_path = isolated_log_dir / "pi_control_node__follower__native-test__Yam.log"
+    assert tee_path.is_file()
+    first_run_content = tee_path.read_text()
+    assert first_run_content
+
+    # A second run must rotate (preserve) the first run's file, not overwrite it.
+    try:
+        backend.connect(
+            make_backend_config(), ArmRole.FOLLOWER, topics_for("t-tee2", "native-test")
+        )
+    finally:
+        backend.close()
+    rotated = [
+        path
+        for path in isolated_log_dir.iterdir()
+        if path.name.startswith("pi_control_node__follower__native-test__Yam__")
+    ]
+    assert len(rotated) == 1
+    assert rotated[0].read_text() == first_run_content
+
+
+@spawn_tests
 def test_backend_can_reconnect_after_close(fake_node):
     fake_node("normal")
     backend = NativeArmBackend()
@@ -774,18 +815,23 @@ def pack_state(
     efforts: list[float] | None = None,
     temperatures: list[float] | None = None,
     currents: list[float] | None = None,
+    frame_ages: list[float] | None = None,
 ) -> bytes:
     padded = positions + [0.0] * (10 - len(positions))
     arrays = []
     for values in (velocities, efforts, temperatures, currents):
         values = values or []
         arrays.append(values + [0.0] * (10 - len(values)))
+    # Default to fresh frames (small constant age) unless a test overrides it.
+    ages = frame_ages if frame_ages is not None else [2.0] * 10
+    ages = ages + [0.0] * (10 - len(ages))
     return JOINT_STRUCT.pack(
         *padded,
         *arrays[0],
         *arrays[1],
         *arrays[2],
         *arrays[3],
+        *ages,
         sequence,
         joint_count,
         1,
@@ -863,6 +909,7 @@ def test_consume_state_extracts_effector_when_extra_joint_present():
             efforts=[0.0] * 6 + [1.1],
             temperatures=[25.0] * 6 + [72.0],
             currents=[0.0] * 6 + [2.3],
+            frame_ages=[5.0] * 6 + [321.0],
         )
     )
     assert backend._state is not None
@@ -872,7 +919,101 @@ def test_consume_state_extracts_effector_when_extra_joint_present():
     assert backend._state.effector.effort_nm == pytest.approx(1.1)
     assert backend._state.effector.temperature_c == pytest.approx(72.0)
     assert backend._state.effector.current_a == pytest.approx(2.3)
+    assert backend._state.effector.frame_age_ms == pytest.approx(321.0)
+    assert backend._state.joints.frame_age_ms == pytest.approx([5.0] * 6)
     backend.close()
+
+
+def test_subscriber_recv_latest_returns_newest_and_counts_discards():
+    context = zmq.Context()
+    publisher = _Publisher(context, "t-recv-latest")
+    subscriber = _Subscriber(context, "t-recv-latest")
+    try:
+        # PUB/SUB slow joiner: keep probing until the subscription propagates.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            publisher.send(b"probe")
+            payload, _ = subscriber.recv_latest()
+            if payload is not None:
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("subscriber never received the probe message")
+
+        for index in range(20):
+            publisher.send(bytes([index]))
+            time.sleep(0.001)  # let the io thread flush past the SNDHWM of 2
+
+        latest: bytes | None = None
+        discarded_total = 0
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and latest != bytes([19]):
+            payload, discarded = subscriber.recv_latest()
+            discarded_total += discarded
+            if payload is not None:
+                latest = payload
+            time.sleep(0.01)
+
+        assert latest == bytes([19])
+        assert discarded_total >= 1
+    finally:
+        publisher.close()
+        subscriber.close()
+        context.term()
+
+
+class QueueSubscriber:
+    """Reader-loop test double mirroring the _Subscriber drain interface."""
+
+    def __init__(self, payloads: list[bytes]) -> None:
+        self.queue = deque(payloads)
+
+    def recv(self) -> bytes | None:
+        return self.queue.popleft() if self.queue else None
+
+    def recv_latest(self) -> tuple[bytes | None, int]:
+        latest: bytes | None = None
+        discarded = 0
+        while self.queue:
+            if latest is not None:
+                discarded += 1
+            latest = self.queue.popleft()
+        return latest, discarded
+
+    def close(self) -> None:
+        self.queue.clear()
+
+
+def test_reader_loop_consumes_state_backlog_as_single_newest_sample(caplog):
+    backend = make_consuming_backend()
+    backlog = [pack_state([0.001 * index] * 6, sequence=index + 1) for index in range(60)]
+    backend._state_sub = QueueSubscriber(backlog)
+    backend._running = True
+    reader = threading.Thread(target=backend._reader_loop)
+    backend._reader = reader
+
+    with caplog.at_level(logging.WARNING, logger="openpi_control.native"):
+        try:
+            reader.start()
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                with backend._condition:
+                    if backend._state is not None:
+                        break
+                time.sleep(0.005)
+        finally:
+            with backend._condition:
+                backend._running = False
+            reader.join(timeout=2.0)
+            backend.close()
+
+    assert not reader.is_alive()
+    assert backend._state is not None
+    # Only the newest sample is observed; the 59 stale ones are discarded
+    # instead of being replayed one per poll (which would lag the state feed).
+    assert backend._state.joints.position_rad == pytest.approx([0.001 * 59] * 6)
+    assert backend._state_generation == 1
+    assert any("59 stale state message(s)" in record.getMessage() for record in caplog.records)
 
 
 def test_read_state_returns_next_packet_when_sequence_repeats():
@@ -1599,12 +1740,12 @@ def test_close_waits_for_active_subscriber_receive_before_closing_it():
             self.receiving = False
             self.closed_during_receive = False
 
-        def recv(self):
+        def recv_latest(self):
             self.receiving = True
             self.receive_started.set()
             assert self.release_receive.wait(timeout=3.0)
             self.receiving = False
-            return None
+            return None, 0
 
         def close(self):
             self.closed_during_receive = self.receiving
@@ -1643,7 +1784,7 @@ def test_stale_reader_failure_cannot_stop_a_reconnected_backend():
             self.receive_started = threading.Event()
             self.release_receive = threading.Event()
 
-        def recv(self):
+        def recv_latest(self):
             self.receive_started.set()
             assert self.release_receive.wait(timeout=2.0)
             raise RuntimeError("retired reader failed")

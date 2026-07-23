@@ -74,6 +74,13 @@ ReturnCode Device::start(int baud_rate) {
     return ReturnCode::SUCCESS;
 }
 
+ReturnCode Device::arm_comm_loss_protection() {
+    if (p_driver_ == nullptr) {
+        return ReturnCode::SUCCESS;
+    }
+    return p_driver_->arm_comm_loss_protection();
+}
+
 ReturnCode Device::step() {
     ReturnCode return_code = read_hardware_values();
     if (return_code != ReturnCode::SUCCESS) {
@@ -487,6 +494,16 @@ ReturnCode Device::init(const CommandLineArgs& cla, int argc, char** argv, std::
     PI_INFO("Device", InfoLevel::ESSENTIAL_0, "%s_%s: read_only=%d (defined_in_model_config=%d)",
             model_.c_str(), id_.c_str(), (int)is_read_only_, (int)read_only_defined_in_model_config);
 
+    // Capability cross-validation: a read-only device (e.g. ARX encoder leader, passive
+    // encoders with no motors) can never track commands, so a follower role request is a
+    // configuration error. Fail fast before any hardware is opened.
+    if (is_read_only_ && cla.role == Role::FOLLOWER) {
+        PI_ERROR("%s_%s is read-only (model config read_only=true) and cannot be used as a follower. "
+                 "Use it as a leader, or select a motorized model for the follower role.",
+                 model_.c_str(), id_.c_str());
+        return ReturnCode::NOT_SUPPORTED;
+    }
+
     PI_INFO("Device", InfoLevel::ESSENTIAL_0, "Initializing topic...");
     if (p_topic != nullptr) {
         p_topic_ = p_topic;
@@ -611,6 +628,9 @@ ReturnCode Device::move(Joint* p_joint, float target_pos, float target_tor,
         return_code = p_joint->move(target_pos, 0, target_tor);
         p_joint->prev_target_tor_ = target_tor;
     } else if (planning_type_ == TrajectoryPlanningType::NONE) {
+        // The synchronized follower slew integrates from the last commanded
+        // target for every planning type, so keep it current here too.
+        p_joint->prev_target_pos_ = target_pos;
         return_code = p_joint->move(target_pos);
     } else {
         PI_ERROR("Invalid planning type %d in %s_%s", (int)planning_type_,

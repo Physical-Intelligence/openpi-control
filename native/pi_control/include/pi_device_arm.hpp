@@ -74,6 +74,18 @@ class DeviceArm : public Device {
     ReturnCode start(int baud_rate) override;
 
     /*!
+     * @brief Final pre-loop servo error-state check. Probes every joint by
+     *        re-sending its last commanded target so DM servos (which never
+     *        broadcast spontaneously) answer with fresh status frames, waits
+     *        ``VERIFY_SERVOS_PROBE_WAIT_US`` for the asynchronous parse of
+     *        those responses, then runs the per-joint ``verify_operational()``
+     *        check (which attempts one re-enable for a latched DM error).
+     *        Delegates to the effector afterwards.
+     * @return ReturnCode::SUCCESS when every servo is operational.
+     */
+    ReturnCode verify_servos_operational() override;
+
+    /*!
      * @brief Performs a single step in the control loop.
      */
     ReturnCode step() override;

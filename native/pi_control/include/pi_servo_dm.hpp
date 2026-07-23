@@ -71,6 +71,7 @@ class ServoDm : public Servo {
      * @brief Register addresses for DM servo configuration and control.
      */
     enum class RegAddr {
+        TIMEOUT       = 9,  ///< CAN communication-loss protection window (uint32, 50 us per count).
         CONTROL_MODE = 10, ///< Register address for setting/reading control mode.
     };
 
@@ -130,6 +131,16 @@ class ServoDm : public Servo {
     ReturnCode start_hardware() override;
 
     /*!
+     * @brief Age of the newest parsed CAN frame for this servo, from the
+     *        DriverArx receive cache (``last_update_perf_``). Note this is
+     *        bus liveness, not position freshness: some frame types (ENCOS
+     *        config acks, non-position ack statuses) refresh the stamp
+     *        without updating the cached position.
+     * @return Frame age in milliseconds, or -1 when no frame was ever parsed.
+     */
+    prof_time_msec_t get_frame_age_ms() override;
+
+    /*!
      * @brief Confirms that ``received_servo_data_`` for this servo has been
      *        populated by at least one parsed status frame. DM motors do not
      *        broadcast status spontaneously, so without a successful
@@ -141,6 +152,18 @@ class ServoDm : public Servo {
      *         ReturnCode::FAIL otherwise.
      */
     ReturnCode verify_position_fresh() override;
+
+    /*!
+     * @brief Confirms the servo is in a healthy, enabled state right before
+     *        the control loop starts. A latched DM error (e.g. 0xD
+     *        communication loss left over from a previous session) silently
+     *        disables the motor while position feedback keeps flowing, so
+     *        the joint would collapse under gravity the moment commands
+     *        start. Attempts one re-enable for DM servos before failing.
+     * @return ReturnCode::SUCCESS if the servo reports a healthy state,
+     *         otherwise an error code.
+     */
+    ReturnCode verify_operational() override;
 
     /*!
      * @brief Moves the servo to the target position.
@@ -275,6 +298,36 @@ class ServoDm : public Servo {
      */
     static ReturnCode can_frame_to_command_encos_servo(DriverCan::can_frame_t& can_frame, uint16_t motor_id, float kp,
                                                        float kd, float pos, float spd, float tor);
+
+    /*!
+     * @brief Constructs an ENCOS config-set frame that writes the CAN
+     *        communication-loss heartbeat window.
+     * @param can_frame Reference to the CAN frame structure to be filled.
+     * @param motor_id The CAN ID of the target motor.
+     * @param timeout_ms Heartbeat window in milliseconds (0 disables the protection).
+     * @return ReturnCode indicating success or failure.
+     */
+    static ReturnCode can_frame_to_set_can_timeout_encos_servo(DriverCan::can_frame_t& can_frame, uint16_t motor_id,
+                                                               uint16_t timeout_ms);
+
+    /*!
+     * @brief Constructs an ENCOS config-query frame for the current CAN
+     *        communication-loss heartbeat window.
+     * @param can_frame Reference to the CAN frame structure to be filled.
+     * @param motor_id The CAN ID of the target motor.
+     * @return ReturnCode indicating success or failure.
+     */
+    static ReturnCode can_frame_to_get_can_timeout_encos_servo(DriverCan::can_frame_t& can_frame, uint16_t motor_id);
+
+    /*!
+     * @brief Parses the ACK_QUERY reply to a CAN-timeout query.
+     * @param can_frame The received reply frame.
+     * @param motor_id Expected motor CAN ID.
+     * @param timeout_ms Out: current heartbeat window in milliseconds.
+     * @return ReturnCode::SUCCESS when the frame is a matching reply, FAIL otherwise.
+     */
+    static ReturnCode parse_can_timeout_reply_encos_servo(const DriverCan::can_frame_t& can_frame, uint16_t motor_id,
+                                                          uint16_t& timeout_ms);
 
    protected:
     /*!

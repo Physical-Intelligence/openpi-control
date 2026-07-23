@@ -79,7 +79,7 @@ class TopicZmqPublishBoundsTest : public testing::Test {
 TEST_F(TopicZmqPublishBoundsTest, RejectsJointPayloadLargerThanWireArray) {
     MsgJoints msg;
     for (int i = 0; i < 11; ++i) {
-        msg.add_joint_info(i, i, i, i, i);
+        msg.add_joint_info(i, i, i, i, i, -1.0f);
     }
 
     EXPECT_EQ(topic_.publish(msg), ReturnCode::INVALID_PARAM);
@@ -98,7 +98,7 @@ TEST(TopicZmqPublishAvailability, RejectsMissingFollowerStatePublisher) {
     TopicZmq topic(&device, cla, 0, nullptr);
     topic.pub_follower_joint_.close();
     MsgJoints msg;
-    msg.add_joint_info(0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    msg.add_joint_info(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f);
 
     EXPECT_EQ(topic.publish(msg), ReturnCode::NOT_INITIALIZED);
 }

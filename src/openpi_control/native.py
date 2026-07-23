@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import re
@@ -14,9 +15,11 @@ from collections import deque
 from collections.abc import Iterable
 from importlib.resources import files
 from pathlib import Path
+from typing import TextIO
 
 import zmq
 
+from . import log_paths
 from .backend import ArmBackend
 from .config import ArmConfig, InputLayout, ResolvedArmAssets, SocketCanConnection
 from .exceptions import (
@@ -54,8 +57,19 @@ from .types import (
     JointState,
     PositionCommand,
 )
+from .urdf_inertial import prepare_merged_urdf
 
 _ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+# Status messages (acks, READY, MODE) must all be processed in order, so the
+# reader drains the whole queue every poll; the cap only guards against a
+# runaway publisher starving the other subscribers.
+MAX_STATUS_MESSAGES_PER_POLL = 256
+# Discarding a handful of state/input samples per poll is normal (the native
+# node publishes faster than the reader polls). A backlog beyond this many
+# messages means the consumer stalled and the policy would have been fed stale
+# state, so it is worth a warning.
+STREAM_BACKLOG_WARN_MESSAGES = 50
 
 
 def _hardware_fault_message(log_line: str) -> str | None:
@@ -162,6 +176,30 @@ class _Subscriber:
             return None
         return payload
 
+    def recv_latest(self) -> tuple[bytes | None, int]:
+        """Drain every queued message and return (newest payload, discarded older count).
+
+        Last-value-wins streams (state, inputs) must always be consumed to the
+        newest sample: reading one message per poll replays any backlog one
+        stale sample per cycle, so a transient consumer stall becomes a
+        permanent multi-second state lag (TCP socket buffers hold well over
+        10 s of 100 Hz traffic despite the HWM of 2). The native node guards
+        its own SUB sockets the same way (drain_sub_to_latest in
+        pi_topic_zmq.cpp).
+        """
+        latest: bytes | None = None
+        discarded = 0
+        while True:
+            try:
+                topic, payload = self.socket.recv_multipart(zmq.NOBLOCK)
+            except zmq.Again:
+                return latest, discarded
+            if topic != self.topic:
+                continue
+            if latest is not None:
+                discarded += 1
+            latest = payload
+
     def close(self) -> None:
         self.socket.close(0)
 
@@ -204,6 +242,7 @@ class NativeArmBackend(ArmBackend):
         self._heartbeat: threading.Thread | None = None
         self._heartbeat_stop = threading.Event()
         self._log_lines: deque[str] = deque(maxlen=200)
+        self._log_tee: TextIO | None = None
         self._reader_error: Exception | None = None
         self._hardware_fault_message: str | None = None
         self._paired_follower_state_topic = ""
@@ -245,6 +284,7 @@ class NativeArmBackend(ArmBackend):
             self._heartbeat = None
             self._heartbeat_stop = threading.Event()
             self._log_lines.clear()
+            self._log_tee = None
             self._reader_error = None
             self._hardware_fault_message = None
             self._ready = False
@@ -261,6 +301,11 @@ class NativeArmBackend(ArmBackend):
                     "physical native control is supported on Linux only"
                 )
             validate_connection(config.connection)
+            if role is ArmRole.FOLLOWER and config.is_read_only():
+                raise ConfigurationError(
+                    f"model {config.model!r} is read-only (leader-only, no actuation) "
+                    "and cannot be used as a follower"
+                )
             executable = native_executable()
             if not executable.is_file() or not executable.stat().st_mode & stat.S_IXUSR:
                 raise NativeProcessError(
@@ -289,6 +334,16 @@ class NativeArmBackend(ArmBackend):
     ) -> ArmCapabilities:
         self._config, self._role, self._topics = config, role, topics
         self._input_layout = config.input_layout() if role is ArmRole.LEADER else InputLayout()
+        # The gravity model must see the effector inertia exactly once: hand the
+        # node a merged URDF whose end link inertial is replaced with the effector
+        # mass model (zero mass when no effector). A caller-supplied URDF is
+        # trusted as-is and skips merging.
+        if config.urdf is None:
+            urdf_path = prepare_merged_urdf(
+                assets, model=config.model, effector_model=config.effector_model
+            )
+        else:
+            urdf_path = assets.urdf
         self._state_sub = _Subscriber(self._context, topics.state)
         self._status_sub = _Subscriber(self._context, topics.status)
         self._lifecycle_pub = _Publisher(self._context, topics.lifecycle_command)
@@ -315,6 +370,11 @@ class NativeArmBackend(ArmBackend):
             os.environ.get("OPENPI_CONTROL_INFO_LEVEL", "0"),
             "--topic_type",
             "ZMQ",
+            # Model configs (format 1.1.1, shared with robot-test) declare "KDL",
+            # which this node does not ship; force the Pinocchio implementation.
+            # Effector configs declaring "Algo" keep priority over this flag.
+            "--algo_type",
+            "Pinocchio",
             "--topic_state",
             topics.state,
             "--topic_live_command",
@@ -330,7 +390,7 @@ class NativeArmBackend(ArmBackend):
             "--arm_instance_config",
             str(assets.instance_config),
             "--urdf_path",
-            str(assets.urdf),
+            str(urdf_path),
             "--force_feedback",
             "-1",
             # Connect is passive: the arm holds its current pose instead of
@@ -363,6 +423,14 @@ class NativeArmBackend(ArmBackend):
                     str(assets.effector_instance_config),
                 ]
             )
+        # Tee the node's stdout to a persistent per-arm log file so post-mortem
+        # debugging survives process exit (the in-memory ring buffer holds only
+        # the last 200 lines). Earlier runs are preserved via timestamp rename.
+        tee_path = log_paths.log_dir() / (
+            f"pi_control_node__{role.value}__{config.name}__{config.model}.log"
+        )
+        log_paths.rotate_existing(tee_path)
+        self._log_tee = tee_path.open("w", encoding="utf-8")
         parent_liveness_read_fd, parent_liveness_write_fd = os.pipe()
         self._parent_liveness_write_fd = parent_liveness_write_fd
         args.extend(["--parent_liveness_fd", str(parent_liveness_read_fd)])
@@ -429,6 +497,14 @@ class NativeArmBackend(ArmBackend):
                 if self._log_reader is not log_reader:
                     return
                 self._log_lines.append(line)
+                if self._log_tee is not None and not self._log_tee.closed:
+                    try:
+                        self._log_tee.write(line)
+                        self._log_tee.flush()
+                    except OSError:
+                        # Disk-full or revoked mount must not take down the
+                        # control path; the ring buffer still captures the tail.
+                        self._log_tee = None
                 if message is not None:
                     self._hardware_fault_message = message
                     self._condition.notify_all()
@@ -461,12 +537,29 @@ class NativeArmBackend(ArmBackend):
                 with self._condition:
                     if not self._running or self._reader is not reader:
                         return
-                for subscriber, consume in (
-                    (state_sub, self._consume_state),
-                    (status_sub, self._consume_status),
-                    (inputs_sub, self._consume_inputs),
+                # Status messages (acks, READY, MODE) all carry meaning, so the
+                # entire queue is processed in order. State and inputs are
+                # last-value-wins streams and are drained to the newest sample
+                # every poll -- see _Subscriber.recv_latest for why.
+                if status_sub:
+                    for _ in range(MAX_STATUS_MESSAGES_PER_POLL):
+                        payload = status_sub.recv()
+                        if payload is None:
+                            break
+                        with self._condition:
+                            if not self._running or self._reader is not reader:
+                                return
+                            self._consume_status(payload)
+                for subscriber, consume, stream in (
+                    (state_sub, self._consume_state, "state"),
+                    (inputs_sub, self._consume_inputs, "inputs"),
                 ):
-                    if subscriber and (payload := subscriber.recv()) is not None:
+                    if not subscriber:
+                        continue
+                    payload, discarded = subscriber.recv_latest()
+                    if discarded >= STREAM_BACKLOG_WARN_MESSAGES:
+                        self._warn_stream_backlog(stream, discarded)
+                    if payload is not None:
                         with self._condition:
                             if not self._running or self._reader is not reader:
                                 return
@@ -488,12 +581,25 @@ class NativeArmBackend(ArmBackend):
                     self._condition.notify_all()
                 return
 
+    def _warn_stream_backlog(self, stream: str, discarded: int) -> None:
+        name = self._config.name if self._config else "unknown"
+        hz = self._config.control_frequency_hz if self._config else 0
+        stalled_s = discarded / hz if hz > 0 else 0.0
+        logging.getLogger(__name__).warning(
+            "%s: drained %d stale %s message(s) (~%.1f s of backlog); "
+            "the consumer stalled and the discarded samples were never observed",
+            name,
+            discarded,
+            stream,
+            stalled_s,
+        )
+
     def _consume_state(self, payload: bytes) -> None:
         if len(payload) != JOINT_STRUCT.size:
             raise ProtocolError(f"invalid joint payload size {len(payload)}")
         assert self._config is not None and self._role is not None
         values = JOINT_STRUCT.unpack(payload)
-        joint_count = int(values[51])
+        joint_count = int(values[61])
         arm_dof = len(self._config.joint_names())
         if joint_count < arm_dof:
             raise ProtocolError(
@@ -504,6 +610,7 @@ class NativeArmBackend(ArmBackend):
         efforts = values[20:30][:arm_dof]
         temperatures = values[30:40][:arm_dof]
         currents = values[40:50][:arm_dof]
+        frame_ages = values[50:60][:arm_dof]
         effector = (
             EffectorState(
                 position=float(values[arm_dof]),
@@ -511,6 +618,7 @@ class NativeArmBackend(ArmBackend):
                 effort_nm=float(values[20 + arm_dof]),
                 temperature_c=float(values[30 + arm_dof]),
                 current_a=float(values[40 + arm_dof]),
+                frame_age_ms=float(values[50 + arm_dof]),
             )
             if joint_count > arm_dof
             else None
@@ -533,11 +641,12 @@ class NativeArmBackend(ArmBackend):
                     effort_nm=efforts,
                     temperature_c=temperatures,
                     current_a=currents,
+                    frame_age_ms=frame_ages,
                 ),
                 effector=effector,
                 monotonic_timestamp=time.monotonic(),
                 wall_timestamp=time.time(),
-                sequence=int(values[50]),
+                sequence=int(values[60]),
                 mode=previous_mode,
             )
             self._state_generation += 1
@@ -792,6 +901,8 @@ class NativeArmBackend(ArmBackend):
             + [0.0] * 10
             + [0.0] * 10
             + [0.0] * 10
+            # joint_age_ms slots: meaningless for a target command (-1 = unknown).
+            + [-1.0] * 10
         )
         return JOINT_STRUCT.pack(
             *arrays, int(time.monotonic_ns() & 0x7FFFFFFF), joint_count, 1, 0.0
@@ -938,6 +1049,13 @@ class NativeArmBackend(ArmBackend):
             self._reader.join()
         if self._log_reader and self._log_reader.is_alive():
             self._log_reader.join(timeout=1)
+        with self._condition:
+            if self._log_tee is not None:
+                try:
+                    self._log_tee.close()
+                except OSError as exc:
+                    cleanup_errors.append(exc)
+                self._log_tee = None
         process_stdout = getattr(self._process, "stdout", None)
         if process_stdout:
             try:

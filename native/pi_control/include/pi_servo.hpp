@@ -11,6 +11,7 @@
 #include "pi_device.hpp"
 #include "pi_driver.hpp"
 #include "pi_hold_checker.hpp"
+#include "pi_profile.hpp"
 #include "pi_safe_mode.hpp"
 
 /*!
@@ -20,6 +21,7 @@ enum class ServoType {
     NOT_SUPPORTED = 0,   ///< Unsupported or unknown servo type.
 
     ENCOS_A4310   = 101, ///< Encos A4310 servo (CAN protocol).
+    ARX_ENCODER   = 103, ///< ARX read-only joint encoder (CAN protocol, 2-byte angle, no actuation).
 
     DM_4340       = 151, ///< Dinamo DM J4340 servo (CAN protocol).
     DM_4310       = 152, ///< Dinamo DM J4310 servo (CAN protocol).
@@ -73,6 +75,8 @@ class Servo {
     float home_pos_rel_ = 0;                                 ///< Home position in relative radian (used for initial positioning and parking).
     float pos_min_rel_;                                       ///< Minimum position limit in relative radian.
     float pos_max_rel_;                                       ///< Maximum position limit in relative radian.
+    bool pos_min_configured_ = false;                         ///< Whether pos_min was loaded from any configuration file.
+    bool pos_max_configured_ = false;                         ///< Whether pos_max was loaded from any configuration file.
     float curr_pos_abs_ = 0;                                  ///< Current position in absolute radian (raw servo value).
     float curr_vel_ = 0;                                      ///< Current velocity in rad/sec.
     float curr_tor_ = 0;                                      ///< Current torque in Nm.
@@ -139,6 +143,19 @@ class Servo {
      *         otherwise ReturnCode::FAIL.
      */
     virtual ReturnCode verify_position_fresh() { return ReturnCode::SUCCESS; }
+
+    /*!
+     * @brief Verifies that the servo is in a healthy, enabled state after
+     *        ``start_hardware()`` + ``read_hardware_values()`` and before the
+     *        control loop starts streaming commands. Subclasses whose
+     *        hardware can latch a silent-disable error (e.g. the DM
+     *        communication-loss trip 0xD) override this to check the error
+     *        state and optionally attempt a one-shot recovery. Default
+     *        implementation returns SUCCESS.
+     * @return ReturnCode::SUCCESS when the servo is operational,
+     *         otherwise an error code.
+     */
+    virtual ReturnCode verify_operational() { return ReturnCode::SUCCESS; }
 
     /*!
      * @brief Selects the unique configured whole-turn offset that places the
@@ -303,6 +320,19 @@ class Servo {
      * @return Estimated input DC current in amperes (A).
      */
     virtual float get_idc_current() { return idc_current_; }
+
+    /*!
+     * @brief Age of the newest hardware feedback frame backing this servo's
+     *        cached position.
+     *
+     * Servo types whose driver keeps a receive-time stamp (ServoDm via the
+     * DriverArx cache) override this; the base returns -1 (unknown) so
+     * publishers can tell "freshness not tracked" apart from a real age.
+     *
+     * @return Frame age in milliseconds, or -1 when the servo type does not
+     *         track per-frame freshness or no frame was ever received.
+     */
+    virtual prof_time_msec_t get_frame_age_ms() { return -1; }
 
     /*!
      * @brief The position kp this servo actually sends in position frames.

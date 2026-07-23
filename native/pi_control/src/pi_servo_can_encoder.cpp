@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "pi_joint.hpp"
+#include "pi_profile.hpp"
 #include "pi_servo_can_encoder.hpp"
 
 // Trigger displacement per encoder tick.
@@ -95,13 +96,26 @@ ReturnCode ServoCanPassiveEncoder::init_config_model(const json& servo_config, c
         }
     }
 
-    return_code = p_driver_can_->register_passive_encoder(response_can_id_, id_, data_index_);
+    // Optional (default false): tolerate multiple teaching-handle firmware
+    // revisions during EEPROM/frequency setup. Only the YAM handle carries this
+    // passive encoder, so the compat path stays isolated from ARX arms.
+    bool firmware_compat = false;
+    if (servo_config.contains(p_config->fn_passive_encoder_firmware_compat)) {
+        return_code =
+            p_config->get_field_value(servo_config, p_config->fn_passive_encoder_firmware_compat, firmware_compat);
+        if (return_code != ReturnCode::SUCCESS) {
+            return return_code;
+        }
+    }
+
+    return_code = p_driver_can_->register_passive_encoder(response_can_id_, id_, data_index_, firmware_compat);
     if (return_code != ReturnCode::SUCCESS) {
         return return_code;
     }
 
     PI_INFO("Servo", InfoLevel::HELPFUL_1,
-            "Passive encoder ID %d: response_can_id=0x%02X button_num=%d", id_, response_can_id_, button_num_);
+            "Passive encoder ID %d: response_can_id=0x%02X button_num=%d firmware_compat=%d", id_, response_can_id_,
+            button_num_, firmware_compat ? 1 : 0);
 
     return ReturnCode::SUCCESS;
 }
@@ -328,6 +342,9 @@ ReturnCode ServoCanPassiveEncoder::parse_encoder_status(const DriverCan::can_fra
     slot.temperature_ = 0;
     slot.digital_inputs_ = p_data[5];
     slot.update_count_++;
+    // Stamp bus liveness for the staleness watchdog
+    // (DriverArx::group_read_hardware_values / ServoDm::read_hardware_values).
+    slot.last_update_perf_ = Profile::get_time_now();
 
     return ReturnCode::SUCCESS;
 }

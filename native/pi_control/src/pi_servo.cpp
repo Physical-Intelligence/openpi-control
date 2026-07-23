@@ -139,6 +139,34 @@ ReturnCode Servo::init_config_model(const json& servo_config,
         }
     }
 
+    // Config format 1.1.1 places the position limits in the model configuration
+    // servo block; the individual configuration may still override them below.
+    return_code = p_config->get_field_value(
+        servo_config, p_config->fn_servo_pos_min, pos_min_rel_);
+    if (return_code == ReturnCode::SUCCESS) {
+        pos_min_configured_ = true;
+        PI_INFO("Servo", InfoLevel::HELPFUL_1,
+                "Servo ID %d: pos_min=%.3f (from model config)", id_,
+                pos_min_rel_);
+    }
+
+    return_code = p_config->get_field_value(
+        servo_config, p_config->fn_servo_pos_max, pos_max_rel_);
+    if (return_code == ReturnCode::SUCCESS) {
+        pos_max_configured_ = true;
+        PI_INFO("Servo", InfoLevel::HELPFUL_1,
+                "Servo ID %d: pos_max=%.3f (from model config)", id_,
+                pos_max_rel_);
+
+        if (pos_min_configured_ && pos_max_rel_ < pos_min_rel_) {
+            PI_ERROR(
+                "Servo ID %d: pos_max (%.3f) is smaller than pos_min (%.3f) "
+                "in model configuration file",
+                id_, pos_max_rel_, pos_min_rel_);
+            return ReturnCode::INVALID_PARAM;
+        }
+    }
+
     return_code = init_current_estimation(servo_model_, p_config);
     if (return_code != ReturnCode::SUCCESS) {
         PI_ERROR("Failed to initialize current estimation (servo ID %d)", id_);
@@ -151,8 +179,6 @@ ReturnCode Servo::init_config_model(const json& servo_config,
 ReturnCode Servo::init_config_individual(const json& servo_config,
                                          const DeviceConfig* p_config) {
     ReturnCode return_code;
-    bool pos_min_configured = false;
-    bool pos_max_configured = false;
     position_wrap_period_ = 0;
     position_wrap_offset_rel_ = 0;
     position_wrap_initialized_ = false;
@@ -179,7 +205,7 @@ ReturnCode Servo::init_config_individual(const json& servo_config,
     return_code = p_config->get_field_value(
         servo_config, p_config->fn_servo_pos_min, pos_min_rel_);
     if (return_code == ReturnCode::SUCCESS) {
-        pos_min_configured = true;
+        pos_min_configured_ = true;
         PI_INFO("Servo", InfoLevel::ESSENTIAL_0, "Servo ID %d: pos_min=%.3f",
                 id_, pos_min_rel_);
     }
@@ -187,16 +213,15 @@ ReturnCode Servo::init_config_individual(const json& servo_config,
     return_code = p_config->get_field_value(
         servo_config, p_config->fn_servo_pos_max, pos_max_rel_);
     if (return_code == ReturnCode::SUCCESS) {
-        pos_max_configured = true;
+        pos_max_configured_ = true;
         PI_INFO("Servo", InfoLevel::ESSENTIAL_0, "Servo ID %d: pos_max=%.3f",
                 id_, pos_max_rel_);
+    }
 
-        if (pos_max_rel_ < pos_min_rel_) {
-            PI_ERROR(
-                "Servo ID %d: pos_max (%.3f) is smaller than pos_min (%.3f)",
-                id_, pos_max_rel_, pos_min_rel_);
-            return ReturnCode::INVALID_PARAM;
-        }
+    if (pos_min_configured_ && pos_max_configured_ && pos_max_rel_ < pos_min_rel_) {
+        PI_ERROR("Servo ID %d: pos_max (%.3f) is smaller than pos_min (%.3f)",
+                 id_, pos_max_rel_, pos_min_rel_);
+        return ReturnCode::INVALID_PARAM;
     }
 
     return_code = p_config->get_field_value(
@@ -210,10 +235,10 @@ ReturnCode Servo::init_config_individual(const json& servo_config,
         servo_config, p_config->fn_servo_position_wrap_period,
         position_wrap_period_);
     if (return_code == ReturnCode::SUCCESS) {
-        if (!pos_min_configured || !pos_max_configured) {
+        if (!pos_min_configured_ || !pos_max_configured_) {
             PI_ERROR(
                 "Servo ID %d: position_wrap_period requires pos_min and "
-                "pos_max in the individual configuration",
+                "pos_max in the model or individual configuration",
                 id_);
             return ReturnCode::INVALID_PARAM;
         }
@@ -334,7 +359,8 @@ ReturnCode Servo::new_servos(const json& joint_config,
         std::unique_ptr<Servo> p_servo;
         if (servo_model == p_config_model->val_servo_model_dm_4340 ||
             servo_model == p_config_model->val_servo_model_dm_4310 ||
-            servo_model == p_config_model->val_servo_model_encos_A4310) {
+            servo_model == p_config_model->val_servo_model_encos_A4310 ||
+            servo_model == p_config_model->val_servo_model_arx_encoder) {
             p_servo = std::make_unique<ServoDm>(p_device, p_joint, p_driver);
             PI_INFO("Servo", InfoLevel::HELPFUL_1, "Created ServoDm instance");
 

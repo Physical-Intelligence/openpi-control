@@ -87,6 +87,15 @@ class DeviceEffector : public Device {
     virtual ReturnCode start(int baud_rate) override;
 
     /*!
+     * @brief Final pre-loop servo error-state check. Mirrors
+     *        ``DeviceArm::verify_servos_operational()``: probes with a
+     *        re-send of the last commanded target so every servo answers
+     *        with a fresh status frame, then verifies each joint.
+     * @return ReturnCode::SUCCESS when every servo is operational.
+     */
+    ReturnCode verify_servos_operational() override;
+
+    /*!
      * @brief Gets a list of all servo IDs.
      * @param servo_ids Output vector to be populated with servo IDs.
      * @return ReturnCode::SUCCESS if successful.
@@ -240,6 +249,13 @@ class DeviceEffector : public Device {
     EffectorControlMode get_effective_control_mode() const {
         return ready_move_force_position_mode_ ? EffectorControlMode::POSITION : control_mode_;
     }
+
+    /*!
+     * @brief Comm-loss policy override: effectors are armed only in TORQUE
+     *        mode (a stale torque command is a runaway grip); position-mode
+     *        effectors keep holding the last position on a CAN loss.
+     */
+    bool wants_comm_loss_stop() override { return control_mode_ == EffectorControlMode::TORQUE; }
 
     /*!
      * @brief Sets/clears the temporary override used during move-to-ready.

@@ -45,20 +45,6 @@ class AlgoPino : public Algo {
                     const CommandLineArgs& cla) override;
 
     /*!
-     * @brief Folds the attached effector's mass model into the gravity model.
-     *
-     * Loads ``<effector_model>_mass.json`` (sibling of the effector model config
-     * named in ``cla``) and adds its inertia to the link the effector bolts onto.
-     * Without this the URDF covers the bare arm only and gravity compensation
-     * underestimates the load on every joint proximal to the wrist.
-     *
-     * @param cla Command-line arguments (provides the effector model config path).
-     * @return ReturnCode::SUCCESS (also when no effector or no mass file exists),
-     *         otherwise a parse/configuration error.
-     */
-    ReturnCode append_effector_mass(const CommandLineArgs& cla);
-
-    /*!
      * @brief Calculates gravity compensation torques.
      *
      * @param joint_positions Joint positions (radians), optionally followed by positions for an attached effector.

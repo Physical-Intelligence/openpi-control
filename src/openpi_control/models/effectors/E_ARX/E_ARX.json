@@ -1,65 +1,54 @@
 {
-    "config_version": "1.1.0",
+    "config_version": "1.1.1",
     "device_model": "E_ARX",
     "device_type": "effector",
     "effector_type": "arx",
-    "topic_type" : "ROS",
-    "driver_type" : "CAN",
+    "topic_type": "ROS",
+    "driver_type": "CAN",
     "algo_type": "Algo",
     "planning_type": "None",
-
     "catalog": {
         "display_label": "E_ARX: Arx Gripper",
         "order": 7,
         "baudrate": 1000000,
         "need_repeated_command": true
     },
-
     "joints": [
         {
-            "joint_id": 7,
-
-            
+            "joint_id": 6,
             "vel_max": 3.0,
-
             "torq_min": -7,
             "torq_max": 7,
             "safe_torq_min": 0,
             "safe_torq_max": 0,
             "torq_rescale": 1,
-
             "pos_rescale": 1,
-
             "pos_error_margin": 0.1,
-
-            "pos_max_safety_margin": 0.2,
-
-
+            "normalized_pos_min": 0.0,
+            "normalized_pos_max": 4.5,
             "safe_mode_derating": 0.2,
             "accel_max": 1.0,
-
             "spring_constant": 0.01,
             "spring_preload": -0.349065850398866,
             "spring_force_config": true,
             "spring_type": -1,
             "threshold_angle_change": 0.00872664625997165,
             "threshold_time_sec": 0.3,
-
             "max_length": 0.07,
-
+            "spring_invert": false,
             "servos": [
                 {
                     "servo_model": "DM J4310",
                     "servo_id": 8,
                     "data_index": 7,
                     "dir_invert": 1,
-
+                    "reverse_flag": false,
+                    "pos_max": 5.077,
+                    "pos_min": 0,
                     "response_delay": 0.025,
-
                     "kT": 1,
                     "kA": 1,
                     "kV": 1,
-
                     "pos_kp": 0,
                     "pos_ki": 0,
                     "pos_kd": 0.1
@@ -67,5 +56,4 @@
             ]
         }
     ]
-
 }

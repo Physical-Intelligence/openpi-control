@@ -7,9 +7,11 @@
 #include <atomic>
 #include <map>
 #include <mutex>
+#include <set>
 
 #include "pi_driver.hpp"
 #include "pi_driver_can.hpp"
+#include "pi_profile.hpp"  // for prof_time_t
 
 #define MAX_SERVO_INFO_BUF_SIZE 20  ///< Maximum number of servo information entries in the receive buffer.
 
@@ -17,17 +19,27 @@ class ServoDm;
 
 /*!
  * @brief Data structure to store servo feedback data received from CAN messages.
+ *
+ * ``last_update_perf_`` is the wall-clock timestamp of the most recent
+ * successful parse (set by ``ServoDm::parse_dm_servo_status`` /
+ * ``ServoDm::parser_encos_servo_status`` /
+ * ``ServoCanPassiveEncoder::parse_encoder_status``). A default-constructed
+ * value (detect via ``Profile::is_zero``) means no frame has ever been
+ * parsed for this slot. The control loop reads this via
+ * ``DriverArx::get_last_update_perf`` to detect a CAN-dead servo
+ * regardless of the cached pos / vel / tor magnitude.
  */
 class ReceivedServoData {
    public:
-    int motor_id_;            ///< Motor/servo ID.
-    float angle_actual_rad_;  ///< Actual current angle in radians.
-    float speed_actual_rad_;  ///< Actual current angular velocity in radians per second.
-    float current_actual_float_;  ///< Actual current in Amperes.
-    uint8_t temperature_;        ///< Current temperature in degrees Celsius.
-    uint8_t error_;              ///< Error code or status flags.
-    uint8_t digital_inputs_;     ///< Raw digital-inputs byte (passive encoders only; bit 0 = button 0, bit 1 = button 1).
-    uint32_t update_count_;      ///< Number of frames parsed into this slot (freshness/silence detection for polled devices).
+    int motor_id_ = 0;                   ///< Motor/servo ID.
+    float angle_actual_rad_ = 0.0f;      ///< Actual current angle in radians.
+    float speed_actual_rad_ = 0.0f;      ///< Actual current angular velocity in radians per second.
+    float current_actual_float_ = 0.0f;  ///< Actual current in Amperes.
+    uint8_t temperature_ = 0;            ///< Current temperature in degrees Celsius.
+    uint8_t error_ = 0;                  ///< Error code or status flags.
+    uint8_t digital_inputs_ = 0;  ///< Raw digital-inputs byte (passive encoders only; bit 0 = button 0, bit 1 = button 1).
+    uint32_t update_count_ = 0;   ///< Number of frames parsed into this slot (freshness/silence detection for polled devices).
+    prof_time_t last_update_perf_;  ///< Timestamp of the most recent successful parse. Default-init means never parsed.
 };
 
 /*!
@@ -42,6 +54,7 @@ class PassiveEncoderRoute {
    public:
     int encoder_id_;   ///< Encoder request CAN id (the report arrives on the map key).
     int data_index_;   ///< Cache slot in received_servo_data_ for this encoder.
+    bool firmware_compat_ = false;  ///< Tolerate multiple teaching-handle firmware revisions during EEPROM/frequency setup (config ``passive_encoder_firmware_compat``). Default false = single-format setup.
 };
 
 /*!
@@ -82,6 +95,74 @@ class DriverArx : public DriverCan {
     virtual ReturnCode read_hardware_values(Servo* p_servo) override;
 
     /*!
+     * @brief Frame-age based bulk read.
+     *
+     * Unlike DXL where ``group_read_hardware_values()`` actually probes the
+     * bus, the ARX/CAN path receives status frames asynchronously on a
+     * background thread (see ``DriverArx::handle_received_message``). This
+     * override therefore scans the cached ``last_update_perf_`` of every
+     * servo bound to this driver: if any servo's most recent frame is older
+     * than the threshold (`ARX_STALE_FRAME_AGE_NORMAL_MS` once any motor has
+     * responded at least once, `ARX_STALE_FRAME_AGE_INITIAL_MS` until then),
+     * the servo is inserted into ``dead_servo_ids_``,
+     * ``last_failed_servo_id_`` is updated to the lowest stale id, and
+     * ``FAIL`` is returned. ``DeviceArm::read_hardware_values`` /
+     * ``DeviceEffector::read_hardware_values`` already handle ``FAIL`` +
+     * dead-set (mark per-joint failed, escalate to emergency recovery), so
+     * no Device-side change is needed.
+     *
+     * @return ``SUCCESS`` when every bound servo's most recent frame is
+     *         within the threshold; ``FAIL`` otherwise.
+     */
+    ReturnCode group_read_hardware_values() override;
+
+    /*!
+     * @brief Lowest stale servo id from the most recent
+     *        ``group_read_hardware_values()`` call, or -1 if every servo
+     *        responded. Surfaced to ``DeviceArm`` so the log can report a
+     *        single id.
+     */
+    int last_failed_servo_id() const override { return last_failed_servo_id_; }
+
+    /*!
+     * @brief Set of servo ids currently considered dead (no frame within
+     *        the staleness threshold). Cleared on every
+     *        ``group_read_hardware_values()`` call so it always reflects
+     *        the current cycle.
+     */
+    std::set<int> dead_servo_ids() const override { return dead_servo_ids_; }
+
+    /*!
+     * @brief Asserts the communication-loss policy (DM TIMEOUT register /
+     *        ENCOS heartbeat window) for every servo bound to this driver's
+     *        device.
+     *
+     * The policy comes from Device::wants_comm_loss_stop(): the window is
+     * armed for velocity/torque-commanded devices (a stale command is a
+     * runaway -> stop) and disarmed for position-commanded devices (the last
+     * command is the hold pose -> keep holding instead of collapsing
+     * detorqued).
+     *
+     * Runs with reception stopped so each config acknowledgement is drained
+     * synchronously instead of being parsed as a status frame. Must be called
+     * immediately before the command stream starts. The DM comm-loss counter
+     * measures time since the LAST RECEIVED FRAME and the register write arms
+     * the comparison immediately (it does not restart the counter), so each
+     * DM servo first gets an idempotent enable frame to reset its counter and
+     * the TIMEOUT write follows within milliseconds; a servo that then
+     * receives no frame within the window (DM_SERVO_CAN_TIMEOUT_MS)
+     * auto-disables with a latched communication-loss error (0xD). The ENCOS
+     * window is persistent (non-volatile), so it is queried first and only
+     * written on mismatch to limit flash wear.
+     *
+     * @return ReturnCode::SUCCESS if the pass completed (individual write
+     *         failures are logged loudly but are non-fatal: the servo stays
+     *         controllable, just with an unasserted policy), otherwise an
+     *         error code.
+     */
+    ReturnCode arm_comm_loss_protection() override;
+
+    /*!
      * @brief Sends a control command to a DM-CAN servo motor.
      * @param p_servo_dm Pointer to the ServoDm instance.
      * @param kp Proportional gain (Kp) for PID position control.
@@ -89,9 +170,12 @@ class DriverArx : public DriverCan {
      * @param position Target position in radians.
      * @param velocity Target velocity in radians per second.
      * @param torque Target torque in Newton-meters.
+     *
+     * Virtual so a read-only subclass (``DriverArxEncoder``) can no-op it.
      * @return ReturnCode::SUCCESS if successful, otherwise an error code.
      */
-    ReturnCode send_command(ServoDm* p_servo_dm, float kp, float kd, float position, float velocity, float torque);
+    virtual ReturnCode send_command(ServoDm* p_servo_dm, float kp, float kd, float position, float velocity,
+                                    float torque);
 
     /*!
      * @brief Enables or disables a servo motor.
@@ -100,9 +184,12 @@ class DriverArx : public DriverCan {
      * @param enable_flag True to enable, false to disable (defaults to true).
      * @param defer_effector_thermal_fault True when the effector will emit the
      *        complete thermal-stop record after this call returns.
+     *
+     * Virtual so a read-only subclass (``DriverArxEncoder``) can replace the
+     * handshake with a cache-freshness warmup poll.
      * @return ReturnCode::SUCCESS if successful, otherwise an error code.
      */
-    ReturnCode enable(int id, int type, bool enable_flag = true, bool defer_effector_thermal_fault = false);
+    virtual ReturnCode enable(int id, int type, bool enable_flag = true, bool defer_effector_thermal_fault = false);
 
     /*!
      * @brief Sends exactly one disable frame without stopping asynchronous reception.
@@ -139,6 +226,21 @@ class DriverArx : public DriverCan {
     }
 
     /*!
+     * @brief Returns the ``last_update_perf_`` cached for the given
+     *        ``data_index`` slot. Default-constructed when no frame has been
+     *        parsed yet (caller should use ``Profile::is_zero``). Read by
+     *        ``ServoDm::read_hardware_values`` to detect per-servo CAN dead
+     *        by frame age.
+     */
+    prof_time_t get_last_update_perf(int data_index) const {
+        if (data_index < 0 || data_index >= MAX_SERVO_INFO_BUF_SIZE) {
+            return prof_time_t{};
+        }
+        std::lock_guard<std::mutex> lock(received_servo_data_mutex_);
+        return received_servo_data_[data_index].last_update_perf_;
+    }
+
+    /*!
      * @brief Registers an RX route for a passive request/response encoder so
      *        handle_received_message() can parse its responses. Must be called
      *        during device init (before the reception thread starts processing
@@ -146,9 +248,12 @@ class DriverArx : public DriverCan {
      * @param response_can_id CAN id the encoder answers on.
      * @param encoder_id Encoder request CAN id.
      * @param data_index Cache slot in received_servo_data_ for this encoder.
+     * @param firmware_compat Tolerate multiple teaching-handle firmware revisions during
+     *        EEPROM/frequency setup (config ``passive_encoder_firmware_compat``; default false).
      * @return ReturnCode::SUCCESS, or INVALID_PARAM for an out-of-range data index.
      */
-    ReturnCode register_passive_encoder(int response_can_id, int encoder_id, int data_index);
+    ReturnCode register_passive_encoder(int response_can_id, int encoder_id, int data_index,
+                                        bool firmware_compat = false);
 
     /*!
      * @brief Snapshots the cached state of a polled passive encoder.
@@ -185,9 +290,10 @@ class DriverArx : public DriverCan {
     /*!
      * @brief Validates firmware and EEPROM frequencies for one passive encoder.
      * @param request_can_id CAN id used for encoder configuration requests.
+     * @param firmware_compat Tolerate multiple teaching-handle firmware revisions (default false).
      * @return ReturnCode::SUCCESS when the encoder is ready for passive polling.
      */
-    ReturnCode configure_passive_encoder(int request_can_id);
+    ReturnCode configure_passive_encoder(int request_can_id, bool firmware_compat);
 
     /*!
      * @brief Sends a configuration request to a passive encoder.
@@ -202,28 +308,61 @@ class DriverArx : public DriverCan {
 
     /*!
      * @brief Reads one passive-encoder EEPROM byte.
+     * @param firmware_compat When true, accept both the <=2.2.x READINGS (0x86, 5-byte) and
+     *        >=2.3.x GET_EEPROM (0x87, 3-byte) reply formats; when false, require the single
+     *        READINGS format (original behavior).
      */
-    ReturnCode read_passive_encoder_eeprom(int request_can_id, uint8_t device, uint8_t offset, uint8_t* p_value);
+    ReturnCode read_passive_encoder_eeprom(int request_can_id, uint8_t device, uint8_t offset, uint8_t* p_value,
+                                           bool firmware_compat);
 
     /*!
      * @brief Reads a low/high EEPROM frequency pair.
+     * @param firmware_compat When true, fall back to the 8-bit low byte if the 16-bit high-byte
+     *        offset is unimplemented (legacy <=2.2.12 EEPROM layout); when false, a missing high
+     *        byte is an error (original behavior).
      */
     ReturnCode read_passive_encoder_frequency(int request_can_id, uint8_t device, uint8_t high_offset,
-                                              uint8_t low_offset, int* p_frequency);
+                                              uint8_t low_offset, int* p_frequency, bool firmware_compat);
 
     /*!
      * @brief Drains frames queued by startup validation before reception starts.
      */
     void drain_startup_frames();
 
+   protected:
     /*!
      * @brief Callback function to handle received CAN messages from servos.
+     *
+     * Virtual so a subclass (e.g. ``DriverArxEncoder``) that speaks a
+     * different wire protocol can override the per-frame parse while reusing
+     * ``open()``'s reception loop, the staleness scan, and the cache.
+     * ``open()`` registers a lambda that dispatches to
+     * ``this->handle_received_message``, so the override is picked up even
+     * from the base ``open()``.
+     *
      * @param p_data_buf Pointer to the data buffer.
      * @param data_buf_size Total size of the data buffer in bytes.
      * @param read_bytes Number of bytes actually read from the CAN bus.
      */
-    void handle_received_message(void* p_data_buf, size_t data_buf_size, size_t read_bytes);
+    virtual void handle_received_message(void* p_data_buf, size_t data_buf_size, size_t read_bytes);
 
+    /*!
+     * @brief Atomically update one cache slot from a decoded angle.
+     *
+     * Provided for subclasses whose status frames carry only an angle
+     * (e.g. an ARX joint encoder). Locks ``received_servo_data_mutex_``,
+     * writes ``motor_id_`` (must be non-zero so ``verify_position_fresh``
+     * passes), ``angle_actual_rad_`` and stamps ``last_update_perf_``.
+     * Velocity/torque/temperature stay at their defaults.
+     *
+     * @param data_index Target cache slot (``Servo::data_index_``).
+     * @param motor_id Non-zero id to record (use the source CAN id).
+     * @param angle_rad Decoded absolute angle in radians.
+     * @return ``SUCCESS``; ``FAIL`` if ``data_index`` is out of range.
+     */
+    ReturnCode update_encoder_slot(int data_index, int motor_id, float angle_rad);
+
+   private:
     ReceivedServoData received_servo_data_[MAX_SERVO_INFO_BUF_SIZE];  ///< Circular buffer storing servo feedback data.
     /// Explicit RX routes for passive encoders, keyed by response CAN id.
     /// Checked before the DM/ENCOS heuristics in handle_received_message().
@@ -237,4 +376,37 @@ class DriverArx : public DriverCan {
     mutable std::mutex received_servo_data_mutex_;
     std::mutex transaction_mutex_;  ///< Serializes writes against synchronous enable transactions.
     std::atomic<int> last_enable_fault_status_{-1};  ///< Fault status returned by the most recent enable/disable operation.
+
+    /*!
+     * @brief Set of servo ids whose most recent CAN frame is older than the
+     *        staleness threshold. Populated and cleared once per
+     *        ``group_read_hardware_values()`` call. Main-thread only.
+     */
+    std::set<int> dead_servo_ids_;
+
+    /*!
+     * @brief Lowest stale servo id from the most recent
+     *        ``group_read_hardware_values()`` call, or -1 when no servo is
+     *        stale. Main-thread only.
+     */
+    int last_failed_servo_id_ = -1;
+
+    /*!
+     * @brief Latched flag: ``true`` once any servo on this driver has
+     *        produced at least one parsed status frame. Picks between
+     *        ``ARX_STALE_FRAME_AGE_INITIAL_MS`` (start-up, longer tolerance)
+     *        and ``ARX_STALE_FRAME_AGE_NORMAL_MS`` (steady state, tighter
+     *        tolerance) inside ``group_read_hardware_values()``.
+     */
+    bool any_motor_moved_ = false;
+
+    /*!
+     * @brief Warn-only telemetry-stall tracking for
+     *        ``group_read_hardware_values()``: servo id -> ``last_update_perf_``
+     *        recorded when the stall warning fired. An entry means the stall
+     *        PI_WARN was already emitted (edge trigger); it is erased -- with a
+     *        recovery PI_WARN reporting the gap length -- once a fresh frame
+     *        arrives. Main-thread only.
+     */
+    std::map<int, prof_time_t> stall_warned_since_;
 };

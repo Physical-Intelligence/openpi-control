@@ -428,6 +428,7 @@ ReturnCode TopicZmq::publish(const MsgJoints& msg) {
         zmq_msg.joint_tor[i] = msg.joints_[i].curr_tor_;
         zmq_msg.temperature[i] = msg.joints_[i].temperature_;
         zmq_msg.idc_current[i] = msg.joints_[i].idc_current_;
+        zmq_msg.joint_age_ms[i] = msg.joints_[i].frame_age_ms_;
     }
     zmq_msg.measured_idc_current = msg.measured_idc_current_;
 
@@ -549,10 +550,12 @@ ReturnCode TopicZmq::process_leader_msg_joint(ZmqJointInfo* p_zmq_msg,
     MsgJoints msg;
     msg.msg_id_ = p_zmq_msg->msg_id;
     for (int i = 0; i < dof_total; ++i) {
+        // Command ingest: the sender's joint_age_ms slots carry no meaning
+        // for a target command, so record "unknown" explicitly.
         msg.add_joint_info(
             p_zmq_msg->joint_pos[i], p_zmq_msg->joint_vel[i],
             p_zmq_msg->joint_tor[i], p_zmq_msg->temperature[i],
-            p_zmq_msg->idc_current[i]);
+            p_zmq_msg->idc_current[i], -1.0f);
     }
     msg.measured_idc_current_ = p_zmq_msg->measured_idc_current;
     return direct ? Topic::process_direct_msg(msg)
@@ -659,8 +662,9 @@ ReturnCode TopicZmq::process_follower_msg_joint(ZmqJointInfo* p_zmq_msg) {
 
     MsgJoints msg;
     for (int i = 0; i < dof_total; i++) {
+        // Follower state ingest: forward the publisher's frame age as-is.
         msg.add_joint_info(p_zmq_msg->joint_pos[i], p_zmq_msg->joint_vel[i], p_zmq_msg->joint_tor[i],
-                           p_zmq_msg->temperature[i], p_zmq_msg->idc_current[i]);
+                           p_zmq_msg->temperature[i], p_zmq_msg->idc_current[i], p_zmq_msg->joint_age_ms[i]);
     }
     msg.measured_idc_current_ = p_zmq_msg->measured_idc_current;
 
