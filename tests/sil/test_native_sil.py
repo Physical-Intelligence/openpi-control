@@ -1488,6 +1488,15 @@ def test_over_torque_on_middle_joint_escalates_to_protective_stop(fake_bus, sess
         fake_bus.set_reported_torque(2, 0.0)
 
 
+@pytest.mark.skip(
+    reason="quarantined 2026-07-23: the client heartbeat thread cannot hold its 1 Hz "
+    "cadence on current hosted runners -- it sends exactly once and then a bounded "
+    "1 s wait (Event.wait and plain time.sleep alike) oversleeps for the rest of the "
+    "test, so the node never arms its dead-client watchdog. Not a code regression: "
+    "the untouched last-green commit 418218a fails identically on the same runner "
+    "image (20260714.228.1) that passed it on 2026-07-20. Evidence in PR #5/#6 "
+    "debug runs. Needs investigation on a live runner (strace of the stalled thread)."
+)
 def test_dead_client_watchdog_idles_the_node(fake_bus, session_factory):
     # kill -9 of the operator's process used to leave the native nodes
     # teleoperating unsupervised indefinitely (the leader node keeps feeding
