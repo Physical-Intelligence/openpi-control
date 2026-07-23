@@ -803,7 +803,13 @@ class NativeArmBackend(ArmBackend):
                     self._debug_heartbeats_sent = getattr(self, "_debug_heartbeats_sent", 0) + 1
                 except Exception:  # noqa: BLE001 - socket closing under us is a normal exit
                     return
-            if stop.wait(1.0):
+            # time.sleep + is_set instead of Event.wait(1.0): CPython's timed
+            # lock acquire has been observed to oversleep unboundedly on
+            # loaded CI runners, freezing the cadence after the first send.
+            # A plain sleep keeps the 1 Hz tick; stop latency of up to one
+            # period is fine for a fire-and-forget heartbeat.
+            time.sleep(1.0)
+            if stop.is_set():
                 return
 
     def _send_lifecycle(
