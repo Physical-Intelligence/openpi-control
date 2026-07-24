@@ -37,6 +37,12 @@ find_package(Eigen3 REQUIRED)
 pkg_check_modules(PC_ZMQ REQUIRED libzmq)
 pkg_check_modules(PINOCCHIO REQUIRED pinocchio)
 
+# Trossen iNerve controller SDK (DriverTrossen). Provisioned by
+# scripts/build_deps.sh from the pinned TrossenRobotics/trossen_arm release
+# (prebuilt static lib + headers); provides the imported STATIC target
+# `libtrossen_arm`.
+find_package(libtrossen_arm REQUIRED)
+
 # Let CMake's runtime dependency scanner resolve local build dependencies
 # without hard-coding those directories into the installed executable.
 set(CMAKE_BUILD_RPATH ${PINOCCHIO_LIBRARY_DIRS} ${PC_ZMQ_LIBRARY_DIRS})
@@ -72,6 +78,10 @@ set(COMMON_SOURCES
   src/pi_driver.cpp
   src/pi_driver_arx.cpp
   src/pi_driver_arx_encoder.cpp
+  src/pi_driver_controller.cpp
+  src/pi_driver_trossen.cpp
+  src/pi_servo_controller.cpp
+  src/pi_device_effector_controller.cpp
   src/pi_driver_can.cpp
   src/pi_joint.cpp
   src/pi_servo.cpp
@@ -95,12 +105,31 @@ set(COMMON_SOURCES
 
 )
 
+# ---------------------------------------------------------------------------
+# libpi_trossen_shim: isolation boundary around the prebuilt libtrossen_arm.a.
+# The vendor archive statically bundles its own pinocchio/urdfdom/tinyxml2;
+# linking it into the node directly makes those symbols interpose with the
+# node's shared pinocchio and mixes two pinocchio builds in one process
+# (SIGSEGV in ModelTpl::addJoint during TrossenArmDriver::configure). The
+# archive is therefore linked into this dedicated shared library and its
+# symbols are hidden from the dynamic symbol table, so only the
+# TrossenArmShim API (compiled here, not from the archive) is exported.
+# ---------------------------------------------------------------------------
+add_library(pi_trossen_shim SHARED src/pi_trossen_shim.cpp)
+target_include_directories(pi_trossen_shim PRIVATE include)
+target_link_libraries(pi_trossen_shim PRIVATE libtrossen_arm pthread)
+# Mark every symbol pulled from static archives (i.e. libtrossen_arm.a and
+# its bundled third-party copies) as LOCAL in the .so's dynamic symbol
+# table. Internal references bind at link time; nothing leaks out.
+target_link_options(pi_trossen_shim PRIVATE "LINKER:--exclude-libs,ALL")
+
 add_executable(${OPENPI_CONTROL_TARGET} ${COMMON_SOURCES})
 
 target_link_libraries(${OPENPI_CONTROL_TARGET}
   ${PC_ZMQ_LDFLAGS}
   ${PINOCCHIO_LDFLAGS}
   Boost::program_options
+  pi_trossen_shim
 )
 
 # Use a transitive DT_RPATH instead of DT_RUNPATH. Libraries copied beside the
@@ -129,6 +158,7 @@ if(OPENPI_CONTROL_BUILD_TESTING)
     ${PC_ZMQ_LDFLAGS}
     ${PINOCCHIO_LDFLAGS}
     Boost::program_options
+    pi_trossen_shim
   )
   gtest_discover_tests(
     pi_topic_zmq_tests
@@ -139,6 +169,11 @@ endif()
 install(TARGETS ${OPENPI_CONTROL_TARGET}
   RUNTIME_DEPENDENCY_SET openpi_control_runtime_dependencies
   RUNTIME DESTINATION openpi_control/bin)
+
+# The shim is a build product (not scanned as an external runtime dependency),
+# so bundle it explicitly next to the other shared libraries; the node's
+# $ORIGIN/../libs RPATH resolves it after wheel installation.
+install(TARGETS pi_trossen_shim LIBRARY DESTINATION openpi_control/libs)
 
 # Ship the node's complete non-system shared-library closure. The executable's
 # $ORIGIN/../libs RPATH above resolves these files after wheel installation;
@@ -184,6 +219,7 @@ if(OPENPI_CONTROL_BUILD_FUZZERS)
       ${PC_ZMQ_LDFLAGS}
       ${PINOCCHIO_LDFLAGS}
       Boost::program_options
+      pi_trossen_shim
     )
   endforeach()
 endif()

@@ -22,9 +22,17 @@ SUPPORTED_MODELS = (
     "ARX_ENC",
     "ARX_L5",
     "ARX_X5",
+    "Trossen_wai_ctrl",
     "Yam",
 )
-SUPPORTED_EFFECTORS = ("E_ARX", "E_ARX_ENC", "E_Yam", "E_Yam_Handle", "E_Yam_Handle_compat")
+SUPPORTED_EFFECTORS = (
+    "E_ARX",
+    "E_ARX_ENC",
+    "E_Trossen_ctrl",
+    "E_Yam",
+    "E_Yam_Handle",
+    "E_Yam_Handle_compat",
+)
 
 
 @dataclass(frozen=True, slots=True)

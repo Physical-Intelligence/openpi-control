@@ -26,7 +26,9 @@ enum class ServoType {
     DM_4340       = 151, ///< Dinamo DM J4340 servo (CAN protocol).
     DM_4310       = 152, ///< Dinamo DM J4310 servo (CAN protocol).
 
-    CAN_PASSIVE_ENCODER = 701 ///< Passive CAN trigger encoder (YAM teaching handle): request/response poll, read-only, never commanded.
+    CAN_PASSIVE_ENCODER = 701, ///< Passive CAN trigger encoder (YAM teaching handle): request/response poll, read-only, never commanded.
+
+    CONTROLLER_JOINT = 801 ///< One joint of a whole-arm controller (Trossen iNerve etc.; no direct bus access).
 };
 
 /*!

@@ -122,6 +122,13 @@
 #define ARX_ENCODER_WARMUP_MAX_RETRY              50                   ///< Max cache-freshness polls during encoder enable.
 #define ARX_ENCODER_WARMUP_SLEEP_US               1000                 ///< Microseconds between encoder warmup polls (1 ms).
 
+// Whole-arm controller (DriverController) stall watchdog. Vendor controller
+// stacks (Trossen iNerve etc.) keep streaming the last command from a driver-
+// internal daemon thread even when the host control loop hangs, so a separate
+// watchdog thread idles the arm when the loop stops calling group read/write.
+#define CONTROLLER_STALL_WATCHDOG_TIMEOUT_MS      1000                 ///< Driver-interaction silence (ms) before the arm is idled.
+#define CONTROLLER_STALL_WATCHDOG_PERIOD_MS       100                  ///< Watchdog polling period (ms).
+
 /*!
  * @enum Role
  * @brief Device roles in teleoperation.

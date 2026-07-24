@@ -21,7 +21,13 @@ import zmq
 
 from . import log_paths
 from .backend import ArmBackend
-from .config import ArmConfig, InputLayout, ResolvedArmAssets, SocketCanConnection
+from .config import (
+    ArmConfig,
+    ArmConnection,
+    EthernetConnection,
+    InputLayout,
+    ResolvedArmAssets,
+)
 from .exceptions import (
     CommandRejectedError,
     ConfigurationError,
@@ -47,6 +53,7 @@ from .protocol import (
     encode_command,
     port_candidates,
 )
+from .servos import trossen_eth
 from .types import (
     ArmCapabilities,
     ArmMode,
@@ -107,7 +114,14 @@ def native_executable() -> Path:
     return Path(found) if found else packaged
 
 
-def validate_connection(connection: SocketCanConnection) -> None:
+def validate_connection(connection: ArmConnection) -> None:
+    if isinstance(connection, EthernetConnection):
+        if not trossen_eth.reachable(connection.ip):
+            raise ConnectionUnavailableError(
+                f"Ethernet controller at {connection.ip} is not reachable; check the cable, "
+                "power, and that the host has an address on the controller's subnet"
+            )
+        return
     path = Path("/sys/class/net") / connection.interface
     if not path.exists():
         raise ConnectionUnavailableError(
@@ -360,7 +374,12 @@ class NativeArmBackend(ArmBackend):
             self._inputs_sub = _Subscriber(self._context, topics.inputs)
         if role is ArmRole.FOLLOWER:
             self._direct_pub = _Publisher(self._context, topics.direct_command)
-        connection_args = ["--control_port", config.connection.interface]
+        # The native node takes the bus identity as an opaque string: a SocketCAN
+        # interface name, or the controller IPv4 address for Ethernet drivers.
+        if isinstance(config.connection, EthernetConnection):
+            connection_args = ["--control_port", config.connection.ip]
+        else:
+            connection_args = ["--control_port", config.connection.interface]
         args = [
             str(executable),
             "--role",

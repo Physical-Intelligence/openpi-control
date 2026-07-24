@@ -8,6 +8,7 @@
 #include "pi_device_config.hpp"
 #include "pi_driver_arx.hpp"
 #include "pi_driver_arx_encoder.hpp"
+#include "pi_driver_trossen.hpp"
 #include "pi_servo.hpp"
 
 Driver::Driver(Device* p_device, const CommandLineArgs& cla) {
@@ -39,8 +40,20 @@ std::shared_ptr<Driver> Driver::new_driver(Device* p_device, const DeviceConfig*
         p_driver = p_driver_encoder;
         PI_INFO("Driver", InfoLevel::HELPFUL_1, "Created CAN read-only encoder driver (DriverArxEncoder)");
 
+    } else if (driver_type == p_config->val_driver_type_trossen) {
+        std::string controller_model;
+        return_code = p_config->get_field_value(p_config->values_, p_config->fn_controller_model, controller_model);
+        if (return_code != ReturnCode::SUCCESS) {
+            PI_ERROR("controller_model is not defined in the model config (required for TROSSEN_ETHERNET)");
+            return nullptr;
+        }
+        p_driver = std::make_shared<DriverTrossen>(p_device, cla, controller_model);
+        PI_INFO("Driver", InfoLevel::HELPFUL_1, "Created Trossen controller driver (DriverTrossen, model=%s)",
+                controller_model.c_str());
+
     } else {
-        PI_ERROR("Unsupported driver type: '%s' (supported types: CAN, CAN_ENCODER)", driver_type.c_str());
+        PI_ERROR("Unsupported driver type: '%s' (supported types: CAN, CAN_ENCODER, TROSSEN_ETHERNET)",
+                 driver_type.c_str());
         return nullptr;
     }
 

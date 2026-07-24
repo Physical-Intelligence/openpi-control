@@ -10,6 +10,7 @@
 
 #include "pi_joint.hpp"
 #include "pi_servo_can_encoder.hpp"
+#include "pi_servo_controller.hpp"
 #include "pi_servo_dm.hpp"
 
 #define MAX_CNT_POS_EXCEED \
@@ -364,6 +365,10 @@ ReturnCode Servo::new_servos(const json& joint_config,
             p_servo = std::make_unique<ServoDm>(p_device, p_joint, p_driver);
             PI_INFO("Servo", InfoLevel::HELPFUL_1, "Created ServoDm instance");
 
+        } else if (servo_model == p_config_model->val_servo_model_trossen_wxai) {
+            p_servo = std::make_unique<ServoController>(p_device, p_joint, p_driver);
+            PI_INFO("Servo", InfoLevel::HELPFUL_1,
+                    "Created ServoController instance");
         } else if (servo_model ==
                    p_config_model->val_servo_model_can_passive_encoder) {
             p_servo = std::make_unique<ServoCanPassiveEncoder>(p_device, p_joint,

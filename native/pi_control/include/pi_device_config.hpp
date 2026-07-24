@@ -43,9 +43,11 @@ class DeviceConfig {
 
     const std::string fn_arm_type         = "arm_type";  ///< Field name for arm type.
     const std::string val_arm_type_arx    = "arx";      ///< Value for arm type arx.
+    const std::string val_arm_type_controller = "controller";  ///< Value for arms managed by a whole-arm controller (DriverController).
 
     const std::string fn_effector_type                    = "effector_type";     ///< Field name for effector type.
     const std::string val_effector_type_arx                   = "arx";               ///< Value for effector type arx.
+    const std::string val_effector_type_controller            = "controller";        ///< Value for effectors managed by a whole-arm controller (DriverController).
     const std::string val_effector_type_none                  = "None";             ///< Value for effector type none.
     const std::string fn_effector_control_mode            = "control_mode";      ///< Field name for effector control mode.
     const std::string val_effector_control_mode_torque        = "torque";            ///< Value for effector control mode torque.
@@ -61,6 +63,8 @@ class DeviceConfig {
     const std::string fn_driver_type         = "driver_type";  ///< Field name for driver type.
     const std::string val_driver_type_can        = "CAN";          ///< Value for driver type CAN.
     const std::string val_driver_type_can_encoder = "CAN_ENCODER"; ///< Value for driver type CAN read-only encoder (DriverArxEncoder).
+    const std::string val_driver_type_trossen    = "TROSSEN_ETHERNET";  ///< Value for driver type Trossen iNerve controller over Ethernet (DriverTrossen).
+    const std::string fn_controller_model        = "controller_model";  ///< Field name for the vendor controller model string (e.g. "wxai_v0").
 
     const std::string fn_algo_type            = "algo_type";   ///< Field name for algorithm type.
     const std::string val_algo_type_algo          = "Algo";        ///< Value for algorithm type Algo.
@@ -111,6 +115,7 @@ class DeviceConfig {
     const std::string val_servo_model_encos_A4310          = "Encos EC-A4310-P2-36";  ///< Encos EC-A4310-P2-36 (CAN).
     const std::string val_servo_model_can_passive_encoder  = "CAN Passive Encoder";   ///< YAM teaching-handle trigger encoder (CAN request/response poll, read-only).
     const std::string val_servo_model_arx_encoder           = "ARX Remote Encoder";     ///< ARX read-only joint encoder (CAN, 2-byte angle, no actuation).
+    const std::string val_servo_model_trossen_wxai         = "Trossen WXAI Joint";    ///< One joint of a Trossen WidowX AI arm managed by the iNerve controller (Ethernet).
     const std::string fn_servo_id                      = "servo_id";            ///< Field name for servo ID.
     const std::string fn_servo_data_index               = "data_index";          ///< Field name for servo data index.
     const std::string fn_servo_pos_min                  = "pos_min";             ///< Field name for servo position minimum (relative radian).
@@ -200,6 +205,31 @@ class DeviceConfig {
             return ReturnCode::INVALID_PARAM;
         }
 
+        return ReturnCode::SUCCESS;
+    }
+
+    /*!
+     * @brief Extracts a typed value for an optional field without warning when it is absent.
+     *
+     * Identical to get_field_value() except a missing field returns INVALID_PARAM silently.
+     * Use for fields that have a documented default so startup logs are not flooded with
+     * "is not defined" warnings for perfectly valid configs.
+     * @param json_data JSON object containing the configuration data.
+     * @param field_name Name of the field to extract (should use one of the fn_* constants).
+     * @param value Output parameter that will be populated with the extracted value.
+     */
+    template <typename T>
+    ReturnCode get_field_value_optional(const json& json_data, const std::string& field_name, T& value) const {
+        if (!json_data.contains(field_name)) {
+            return ReturnCode::INVALID_PARAM;
+        }
+        try {
+            value = json_data[field_name].get<T>();
+        } catch (const nlohmann::json::type_error& e) {
+            std::string what = e.what();
+            PI_ERROR("Type Error: %s", what.c_str());
+            return ReturnCode::INVALID_PARAM;
+        }
         return ReturnCode::SUCCESS;
     }
 
