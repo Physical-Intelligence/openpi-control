@@ -45,6 +45,8 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         OPT_INFO_LEVEL, po::value<int>()->default_value(0),
         "The level of information message to see: lower value shows less "
         "frequent messages")(
+        OPT_BAUD_RATE, po::value<int>()->default_value(DEFAULT_BAUD_RATE),
+        "To set the baud rate of the serial port (bps)")(
         OPT_DOF_ARM, po::value<int>()->default_value(DEFAULT_DOF_ARM),
         "To set the DOF of the arm")(
         OPT_SERVO_NUM_ARM,
@@ -305,6 +307,15 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
                 info_groups.c_str());
     } else {
         PI_ERROR("--%s is not set", OPT_INFO_GROUPS);
+        exit(2);
+    }
+
+    if (vm.count(OPT_BAUD_RATE)) {
+        baud_rate = vm[OPT_BAUD_RATE].as<int>();
+        PI_INFO("main()", InfoLevel::ESSENTIAL_0, "Baud rate: %d bps",
+                baud_rate);
+    } else {
+        PI_ERROR("--%s is not set", OPT_BAUD_RATE);
         exit(2);
     }
 

@@ -166,7 +166,7 @@ int main(int argc, char** argv) {
 
         PI_INFO("main()", InfoLevel::ESSENTIAL_0, "Starting devices...");
 
-        return_code = p_device->start(0);
+        return_code = p_device->start(cla.baud_rate);
         if (return_code != ReturnCode::SUCCESS) {
             // Communication failures should not keep the process running for
             // long.

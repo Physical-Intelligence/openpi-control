@@ -26,7 +26,11 @@ enum class ServoType {
     DM_4340       = 151, ///< Dinamo DM J4340 servo (CAN protocol).
     DM_4310       = 152, ///< Dinamo DM J4310 servo (CAN protocol).
 
-    CAN_PASSIVE_ENCODER = 701 ///< Passive CAN trigger encoder (YAM teaching handle): request/response poll, read-only, never commanded.
+    FT_STS3215    = 301, ///< FeeTech STS3215 servo (SMS/STS serial protocol; also covers Hiwonder HX-30HM/HX-10HM).
+
+    CAN_PASSIVE_ENCODER = 701, ///< Passive CAN trigger encoder (YAM teaching handle): request/response poll, read-only, never commanded.
+
+    CONTROLLER_JOINT = 801 ///< One joint of a whole-arm controller (Trossen iNerve etc.; no direct bus access).
 };
 
 /*!
@@ -204,6 +208,22 @@ class Servo {
      * @return ReturnCode indicating success or failure.
      */
     virtual ReturnCode apply_torque(float torque) = 0;
+
+    /*!
+     * @brief Enables or disables torque output of the servo.
+     *
+     * Virtual so device code (e.g. DeviceEffectorNello) can toggle torque on
+     * any bus-servo family without casting to a concrete type. The default
+     * implementation fast-fails for servo families without a torque enable
+     * register.
+     * @param enable True to enable torque output, false to disable it.
+     * @return ReturnCode indicating success or failure.
+     */
+    virtual ReturnCode enable_torque(bool enable) {
+        (void)enable;
+        PI_ERROR("enable_torque is not supported for servo ID %d (model %s)", id_, servo_model_.c_str());
+        return ReturnCode::NOT_SUPPORTED;
+    }
 
     /*!
      * @brief Applies torque while retaining the servo's configured derivative damping.

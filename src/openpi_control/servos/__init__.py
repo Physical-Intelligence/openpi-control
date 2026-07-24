@@ -12,10 +12,15 @@ JSON, look the string up here. A new servo model must use the same canonical
 string in the model JSON and in this table.
 
 Driver module API (uniform across families):
-    PORT_TYPE: str             "can" or "serial" — which bus session the
-                               driver needs (see ``buses.open_bus``)
-    set_zero(bus, servo_id)    set the current position as the firmware zero;
-                               returns None on success or an error string
+    PORT_TYPE: str             "can", "serial", or "ethernet" — which bus
+                               session the driver needs (see ``buses.open_bus``)
+    WHOLE_ARM_ZERO: bool       False: the family zeroes one servo at a time and
+                               defines ``set_zero(bus, servo_id)``. True: the
+                               family (whole-arm Ethernet controllers, e.g.
+                               Trossen iNerve) zeroes every joint in one
+                               controller transaction and defines
+                               ``set_zero_whole_arm(bus)`` instead.
+    set_zero* functions        return None on success or an error string
 
 Adding a servo family: create ``<family>_<bus>.py`` with that API (port the
 routine from robot-test ``pi_control/servos``), then register every canonical
@@ -27,7 +32,7 @@ from __future__ import annotations
 
 import types
 
-from openpi_control.servos import dm_can, dxl_serial, encos_can
+from openpi_control.servos import dm_can, dxl_serial, encos_can, ft_serial, trossen_eth
 
 # Servo model string -> driver module, or None for read-only encoders whose
 # zero is fixed in hardware (reported as skipped by the zeroing tool, never
@@ -46,6 +51,10 @@ SERVO_ZERO_DRIVERS: dict[str, types.ModuleType | None] = {
     "Dynamixel XH430-W210": dxl_serial,
     "Dynamixel XC330-T288": dxl_serial,
     "Dynamixel XH430-W350": dxl_serial,
+    # FeeTech SMS/STS serial (SO-ARM100/101; also covers Hiwonder HX-30HM/HX-10HM).
+    "FeeTech STS3215": ft_serial,
+    # Whole-arm Ethernet controller joints (zeroed via one EEPROM write).
+    "Trossen WXAI Joint": trossen_eth,
     # Read-only encoders: no motor, zero reference fixed in hardware.
     "ARX Remote Encoder": None,
     "CAN Passive Encoder": None,

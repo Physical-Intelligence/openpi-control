@@ -1,0 +1,58 @@
+{
+    "config_version": "1.1.1",
+    "device_model": "E_SO101",
+    "device_type": "effector",
+    "effector_type": "nello",
+    "topic_type": "ROS",
+    "driver_type": "FEETECH",
+    "algo_type": "Algo",
+    "planning_type": "None",
+    "catalog": {
+        "display_label": "E_SO101: SO-ARM100/101 Gripper",
+        "order": 10,
+        "baudrate": 1000000,
+        "need_repeated_command": false
+    },
+    "joints": [
+        {
+            "joint_id": 5,
+            "vel_max": 3.0,
+            "torq_min": -1.9,
+            "torq_max": 1.9,
+            "safe_torq_min": 0,
+            "safe_torq_max": 0,
+            "torq_rescale": 1.0,
+            "pos_rescale": 1,
+            "pos_error_margin": 0.1,
+            "safe_mode_derating": 0.25,
+            "accel_max": 1.0,
+            "spring_constant": 0,
+            "spring_preload": 0,
+            "spring_force_config": false,
+            "spring_type": -1,
+            "threshold_angle_change": 0,
+            "threshold_time_sec": 0,
+            "max_length": 0.06,
+            "spring_invert": false,
+            "servos": [
+                {
+                    "servo_model": "FeeTech STS3215",
+                    "servo_id": 6,
+                    "data_index": 5,
+                    "dir_invert": 1,
+                    "pos_min": -0.174533,
+                    "pos_max": 1.74533,
+                    "reverse_flag": false,
+                    "response_delay": 0.025,
+                    "kT": 0.002,
+                    "kA": 0.0,
+                    "kV": 0.001534,
+                    "pos_kp": 0,
+                    "pos_ki": 0,
+                    "pos_kd": 0,
+                    "servo_resolution": 4096
+                }
+            ]
+        }
+    ]
+}

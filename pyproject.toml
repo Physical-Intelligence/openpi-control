@@ -14,6 +14,14 @@ dependencies = [
   # Direct CAN access for the servo zeroing registry (openpi_control.servos).
   "python-can>=4.3",
   "pyzmq>=25",
+  # Trossen iNerve Ethernet controllers: discovery, EEPROM zeroing, and IP
+  # provisioning (openpi_control.servos.trossen_eth). Pinned to the same
+  # release as the C++ libtrossen_arm in scripts/build_deps.sh so the driver
+  # <-> controller firmware compatibility stays aligned.
+  "trossen-arm==1.10.0",
+  # USB-serial bus-servo maintenance sessions (openpi_control.servos.buses)
+  # for the FeeTech/Dynamixel serial families (e.g. SO-ARM101).
+  "pyserial>=3.5",
 ]
 
 [project.optional-dependencies]

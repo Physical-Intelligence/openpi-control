@@ -1,0 +1,32 @@
+{
+    "config_version": "1.1.1",
+    "device_model": "E_SO101",
+    "device_type": "effector",
+    "effector_type": "nello",
+    "spring_effect": false,
+    "control_mode": "position",
+    "base_rpy": [
+        0,
+        0,
+        0
+    ],
+    "rpy_invert": [
+        1,
+        1,
+        1
+    ],
+    "joints": [
+        {
+            "joint_id": 5,
+            "reference_servo_index": 0,
+            "servos": [
+                {
+                    "servo_id": 6,
+                    "zero_pos": 0.0,
+                    "home_pos": 0.0,
+                    "spring_home_pos": 0.0
+                }
+            ]
+        }
+    ]
+}

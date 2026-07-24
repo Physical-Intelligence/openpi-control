@@ -17,6 +17,7 @@ import can
 from openpi_control.servos import buses
 
 PORT_TYPE = buses.PORT_TYPE_CAN
+WHOLE_ARM_ZERO = False
 
 _CAN_ID_BROADCAST = 0x7FF
 _CMD_SET_ZERO = 0x03

@@ -16,6 +16,7 @@
 #define OPT_EFFECTOR_MODEL                        "effector_model"   ///< Effector model option.
 #define OPT_EFFECTOR_ID                           "effector_id"      ///< Effector ID option.
 #define OPT_CONTROL_PORT                          "control_port"     ///< Control port option.
+#define OPT_BAUD_RATE                             "baud_rate"        ///< Baud rate option (serial buses).
 #define OPT_INFO_LEVEL                            "info_level"       ///< Logging level option.
 #define OPT_INFO_GROUPS                           "info_groups"      ///< Information groups option.
 #define OPT_TOPIC_JOINT                           "topic_joint"      ///< Joint topic option.
@@ -104,6 +105,7 @@ class CommandLineArgs {
     std::string topic_joystick;           ///< Joystick topic name.
     std::string info_groups;              ///< Information groups (comma-separated).
     std::string control_port_name;        ///< Control port name.
+    int baud_rate;                        ///< Baud rate for serial buses (bps).
     int info_level;                       ///< Logging level.
     int dof_arm;                          ///< Arm DOF.
     int servo_num_arm;                    ///< Arm servo count.

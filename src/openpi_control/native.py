@@ -21,7 +21,14 @@ import zmq
 
 from . import log_paths
 from .backend import ArmBackend
-from .config import ArmConfig, InputLayout, ResolvedArmAssets, SocketCanConnection
+from .config import (
+    ArmConfig,
+    ArmConnection,
+    EthernetConnection,
+    InputLayout,
+    ResolvedArmAssets,
+    SerialConnection,
+)
 from .exceptions import (
     CommandRejectedError,
     ConfigurationError,
@@ -47,6 +54,7 @@ from .protocol import (
     encode_command,
     port_candidates,
 )
+from .servos import trossen_eth
 from .types import (
     ArmCapabilities,
     ArmMode,
@@ -107,7 +115,22 @@ def native_executable() -> Path:
     return Path(found) if found else packaged
 
 
-def validate_connection(connection: SocketCanConnection) -> None:
+def validate_connection(connection: ArmConnection) -> None:
+    if isinstance(connection, EthernetConnection):
+        if not trossen_eth.reachable(connection.ip):
+            raise ConnectionUnavailableError(
+                f"Ethernet controller at {connection.ip} is not reachable; check the cable, "
+                "power, and that the host has an address on the controller's subnet"
+            )
+        return
+    if isinstance(connection, SerialConnection):
+        device = Path(connection.device)
+        if not device.exists():
+            raise ConnectionUnavailableError(
+                f"serial device {connection.device!r} does not exist; "
+                "check the USB cable and adapter"
+            )
+        return
     path = Path("/sys/class/net") / connection.interface
     if not path.exists():
         raise ConnectionUnavailableError(
@@ -360,7 +383,20 @@ class NativeArmBackend(ArmBackend):
             self._inputs_sub = _Subscriber(self._context, topics.inputs)
         if role is ArmRole.FOLLOWER:
             self._direct_pub = _Publisher(self._context, topics.direct_command)
-        connection_args = ["--control_port", config.connection.interface]
+        # The native node takes the bus identity as an opaque string: a SocketCAN
+        # interface name, the controller IPv4 address for Ethernet drivers, or
+        # the tty device path for serial buses (which also need the catalog baud).
+        if isinstance(config.connection, EthernetConnection):
+            connection_args = ["--control_port", config.connection.ip]
+        elif isinstance(config.connection, SerialConnection):
+            connection_args = [
+                "--control_port",
+                config.connection.device,
+                "--baud_rate",
+                str(config.catalog_baudrate()),
+            ]
+        else:
+            connection_args = ["--control_port", config.connection.interface]
         args = [
             str(executable),
             "--role",

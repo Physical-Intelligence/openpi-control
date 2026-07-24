@@ -15,6 +15,7 @@ import can
 from openpi_control.servos import buses
 
 PORT_TYPE = buses.PORT_TYPE_CAN
+WHOLE_ARM_ZERO = False
 
 _ZERO_PAYLOAD = bytes([0xFF] * 7 + [0xFE])
 _RESPONSE_TIMEOUT_S = 0.05

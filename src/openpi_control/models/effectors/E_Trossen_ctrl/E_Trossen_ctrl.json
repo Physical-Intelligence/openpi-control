@@ -1,0 +1,66 @@
+{
+    "config_version": "1.1.1",
+    "device_model": "E_Trossen_ctrl",
+    "device_type": "effector",
+    "effector_type": "controller",
+    "topic_type": "ROS",
+    "driver_type": "TROSSEN_ETHERNET",
+    "algo_type": "Algo",
+    "planning_type": "None",
+    "catalog": {
+        "display_label": "E_Trossen_ctrl: Trossen Gripper (Ethernet controller)",
+        "order": 8,
+        "baudrate": 1000000,
+        "need_repeated_command": true
+    },
+    "joint_init_sequence": [
+        3,
+        2,
+        5,
+        4,
+        1,
+        6
+    ],
+    "joints": [
+        {
+            "joint_id": 6,
+            "vel_max": 0.1,
+            "torq_min": -120,
+            "torq_max": 120,
+            "safe_torq_min": 0,
+            "safe_torq_max": 0,
+            "torq_rescale": 1,
+            "pos_rescale": 1,
+            "pos_error_margin": 0.01,
+            "pos_max_safety_margin": 0.002,
+            "safe_mode_derating": 0.2,
+            "accel_max": 1.0,
+            "spring_constant": 25,
+            "spring_preload": 0,
+            "spring_force_config": true,
+            "spring_type": 1,
+            "threshold_angle_change": 0.0005,
+            "threshold_time_sec": 0.1,
+            "max_length": 0.04,
+            "spring_invert": false,
+            "servos": [
+                {
+                    "servo_model": "Trossen WXAI Joint",
+                    "servo_id": 7,
+                    "data_index": 6,
+                    "dir_invert": 1,
+                    "reverse_flag": false,
+                    "pos_max": 0.04,
+                    "pos_min": 0,
+                    "response_delay": 0.0,
+                    "kT": 1,
+                    "kA": 1,
+                    "kV": 1,
+                    "pos_kp": 0,
+                    "pos_ki": 0,
+                    "pos_kd": 0
+                }
+            ]
+        }
+    ]
+}

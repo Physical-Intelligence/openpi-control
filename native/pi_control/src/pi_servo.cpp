@@ -10,7 +10,9 @@
 
 #include "pi_joint.hpp"
 #include "pi_servo_can_encoder.hpp"
+#include "pi_servo_controller.hpp"
 #include "pi_servo_dm.hpp"
+#include "pi_servo_ft.hpp"
 
 #define MAX_CNT_POS_EXCEED \
     100  ///< Threshold count for position limit exceed detection
@@ -370,6 +372,13 @@ ReturnCode Servo::new_servos(const json& joint_config,
                                                                p_driver);
             PI_INFO("Servo", InfoLevel::HELPFUL_1,
                     "Created ServoCanPassiveEncoder instance");
+        } else if (servo_model == p_config_model->val_servo_model_trossen_wxai) {
+            p_servo = std::make_unique<ServoController>(p_device, p_joint, p_driver);
+            PI_INFO("Servo", InfoLevel::HELPFUL_1,
+                    "Created ServoController instance");
+        } else if (servo_model == p_config_model->val_servo_model_ft_sts3215) {
+            p_servo = std::make_unique<ServoFt>(p_device, p_joint, p_driver);
+            PI_INFO("Servo", InfoLevel::HELPFUL_1, "Created ServoFt instance");
         } else {
             PI_ERROR("Unsupported servo model: %s", servo_model.c_str());
             return ReturnCode::NOT_SUPPORTED;

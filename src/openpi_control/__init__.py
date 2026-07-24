@@ -5,10 +5,13 @@ from .config import (
     FOLLOWER_CONTROL_FREQUENCY_HZ,
     LEADER_CONTROL_FREQUENCY_HZ,
     ArmConfig,
+    EthernetConnection,
     InputLayout,
     ResolvedArmAssets,
     SafetyLimits,
+    SerialConnection,
     SocketCanConnection,
+    connection_for_interface,
     resolve_model_assets,
 )
 from .exceptions import (
@@ -52,6 +55,7 @@ __all__ = [
     "ConfigurationError",
     "ConnectionUnavailableError",
     "EffectorState",
+    "EthernetConnection",
     "FollowerArm",
     "HardwareFaultError",
     "InputLayout",
@@ -64,9 +68,11 @@ __all__ = [
     "RoleError",
     "SafetyLimits",
     "ResolvedArmAssets",
+    "SerialConnection",
     "SocketCanConnection",
     "StaleStateError",
     "StateTimeoutError",
     "TeleopPair",
+    "connection_for_interface",
     "resolve_model_assets",
 ]
