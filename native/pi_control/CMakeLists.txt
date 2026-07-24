@@ -78,21 +78,28 @@ set(COMMON_SOURCES
   src/pi_driver.cpp
   src/pi_driver_arx.cpp
   src/pi_driver_arx_encoder.cpp
+  src/pi_driver_can.cpp
   src/pi_driver_controller.cpp
   src/pi_driver_trossen.cpp
-  src/pi_servo_controller.cpp
-  src/pi_device_effector_controller.cpp
-  src/pi_driver_can.cpp
+  # Serial bus-servo stack (protocol-neutral DriverSerial + FeeTech; a future
+  # Dynamixel port adds pi_driver_dxl.cpp / pi_servo_dxl.cpp here).
+  src/pi_driver_serial.cpp
+  src/pi_driver_ft.cpp
+  src/pi_servo_ft.cpp
   src/pi_joint.cpp
   src/pi_servo.cpp
+  src/pi_servo_controller.cpp
   src/pi_servo_dm.cpp
   src/pi_servo_dm_status.cpp
   src/pi_servo_can_encoder.cpp
   src/pi_device.cpp
   src/pi_device_arm.cpp
   src/pi_device_arm_arx.cpp
+  src/pi_device_arm_nello.cpp
   src/pi_device_effector.cpp
   src/pi_device_effector_arx.cpp
+  src/pi_device_effector_controller.cpp
+  src/pi_device_effector_nello.cpp
   src/pi_device_config.cpp
   src/pi_algo.cpp
   src/pi_algo_pino.cpp

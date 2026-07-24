@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#define DEFAULT_BAUD_RATE                         3000000            ///< Default baud rate (bits per second).
 #define DEFAULT_DOF_ARM                           6                  ///< Default arm DOF.
 #define DEFAULT_SERVO_NUM_ARM                     DEFAULT_DOF_ARM    ///< Default number of servos in arm.
 #define DEFAULT_DOF_EFFECTOR                      1                  ///< Default effector DOF.
@@ -104,6 +105,13 @@
 // to the policy but never trip the 10 s dead detector.
 #define ARX_STALL_WARN_AGE_MS                     250                  ///< Frame age (ms) that triggers the warn-only stall log.
 
+// Whole-arm controller (DriverController) stall watchdog. Vendor controller
+// stacks (Trossen iNerve etc.) keep streaming the last command from a driver-
+// internal daemon thread even when the host control loop hangs, so a separate
+// watchdog thread idles the arm when the loop stops calling group read/write.
+#define CONTROLLER_STALL_WATCHDOG_TIMEOUT_MS      1000                 ///< Driver-interaction silence (ms) before the arm is idled.
+#define CONTROLLER_STALL_WATCHDOG_PERIOD_MS       100                  ///< Watchdog polling period (ms).
+
 // ARX read-only joint encoder (DriverArxEncoder) CAN feedback decoding.
 // Per the ARX encoder CAN protocol: each joint encoder broadcasts a fixed 2-byte
 // mechanical angle at 200 Hz. raw = (data[0] << 8) | data[1], covering 0..16384
@@ -121,13 +129,6 @@
 // SLEEP_US between attempts (50 * 1 ms = 50 ms, ~10 frame periods on a healthy bus).
 #define ARX_ENCODER_WARMUP_MAX_RETRY              50                   ///< Max cache-freshness polls during encoder enable.
 #define ARX_ENCODER_WARMUP_SLEEP_US               1000                 ///< Microseconds between encoder warmup polls (1 ms).
-
-// Whole-arm controller (DriverController) stall watchdog. Vendor controller
-// stacks (Trossen iNerve etc.) keep streaming the last command from a driver-
-// internal daemon thread even when the host control loop hangs, so a separate
-// watchdog thread idles the arm when the loop stops calling group read/write.
-#define CONTROLLER_STALL_WATCHDOG_TIMEOUT_MS      1000                 ///< Driver-interaction silence (ms) before the arm is idled.
-#define CONTROLLER_STALL_WATCHDOG_PERIOD_MS       100                  ///< Watchdog polling period (ms).
 
 /*!
  * @enum Role

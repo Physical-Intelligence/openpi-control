@@ -23,7 +23,8 @@ def test_physical_model_catalog_is_complete(model: str) -> None:
     assert assets.model_config.is_file()
     assert assets.instance_config.is_file()
     assert assets.urdf.is_file()
-    assert len(config.joint_names()) == 6
+    # SO101 (SO-ARM100/101) is the catalog's only 5-DOF arm; everything else is 6-DOF.
+    assert len(config.joint_names()) == (5 if model == "SO101" else 6)
     # The native node is always launched with --algo_type Pinocchio, which overrides
     # any config value except "Algo" (config keeps priority for "Algo"). Arm configs
     # must therefore never declare "Algo": robot-test 1.1.1 configs say "KDL"
@@ -42,6 +43,13 @@ def test_connection_for_interface_dispatches_on_the_interface_form() -> None:
 def test_serial_connection_requires_a_dev_path() -> None:
     with pytest.raises(ConfigurationError, match="/dev path"):
         SerialConnection("ttyUSB0")
+
+
+def test_so101_catalog_declares_serial_port_type_and_baudrate() -> None:
+    config = ArmConfig("arm", "SO101", SocketCanConnection("test"), effector_model="E_SO101")
+    catalog = json.loads(config.resolve_assets().model_config.read_text())["catalog"]
+    assert catalog["port_type"] == "Serial"
+    assert config.catalog_baudrate() == 1000000
 
 
 def test_logical_identity_is_separate_from_instance_config(tmp_path: Path) -> None:

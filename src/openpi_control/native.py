@@ -27,6 +27,7 @@ from .config import (
     EthernetConnection,
     InputLayout,
     ResolvedArmAssets,
+    SerialConnection,
 )
 from .exceptions import (
     CommandRejectedError,
@@ -120,6 +121,14 @@ def validate_connection(connection: ArmConnection) -> None:
             raise ConnectionUnavailableError(
                 f"Ethernet controller at {connection.ip} is not reachable; check the cable, "
                 "power, and that the host has an address on the controller's subnet"
+            )
+        return
+    if isinstance(connection, SerialConnection):
+        device = Path(connection.device)
+        if not device.exists():
+            raise ConnectionUnavailableError(
+                f"serial device {connection.device!r} does not exist; "
+                "check the USB cable and adapter"
             )
         return
     path = Path("/sys/class/net") / connection.interface
@@ -375,9 +384,17 @@ class NativeArmBackend(ArmBackend):
         if role is ArmRole.FOLLOWER:
             self._direct_pub = _Publisher(self._context, topics.direct_command)
         # The native node takes the bus identity as an opaque string: a SocketCAN
-        # interface name, or the controller IPv4 address for Ethernet drivers.
+        # interface name, the controller IPv4 address for Ethernet drivers, or
+        # the tty device path for serial buses (which also need the catalog baud).
         if isinstance(config.connection, EthernetConnection):
             connection_args = ["--control_port", config.connection.ip]
+        elif isinstance(config.connection, SerialConnection):
+            connection_args = [
+                "--control_port",
+                config.connection.device,
+                "--baud_rate",
+                str(config.catalog_baudrate()),
+            ]
         else:
             connection_args = ["--control_port", config.connection.interface]
         args = [

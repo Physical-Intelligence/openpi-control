@@ -8,6 +8,7 @@
 #include "pi_device_config.hpp"
 #include "pi_driver_arx.hpp"
 #include "pi_driver_arx_encoder.hpp"
+#include "pi_driver_ft.hpp"
 #include "pi_driver_trossen.hpp"
 #include "pi_servo.hpp"
 
@@ -51,8 +52,12 @@ std::shared_ptr<Driver> Driver::new_driver(Device* p_device, const DeviceConfig*
         PI_INFO("Driver", InfoLevel::HELPFUL_1, "Created Trossen controller driver (DriverTrossen, model=%s)",
                 controller_model.c_str());
 
+    } else if (driver_type == p_config->val_driver_type_ft) {
+        p_driver = std::make_shared<DriverFt>(p_device, cla);
+        PI_INFO("Driver", InfoLevel::HELPFUL_1, "Created FeeTech driver (DriverFt)");
+
     } else {
-        PI_ERROR("Unsupported driver type: '%s' (supported types: CAN, CAN_ENCODER, TROSSEN_ETHERNET)",
+        PI_ERROR("Unsupported driver type: '%s' (supported types: CAN, CAN_ENCODER, TROSSEN_ETHERNET, FEETECH)",
                  driver_type.c_str());
         return nullptr;
     }

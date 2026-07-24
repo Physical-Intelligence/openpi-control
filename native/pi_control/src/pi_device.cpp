@@ -9,9 +9,11 @@
 
 #include "pi_device.hpp"
 #include "pi_device_arm_arx.hpp"
+#include "pi_device_arm_nello.hpp"
 #include "pi_device_config.hpp"
 #include "pi_device_effector_arx.hpp"
 #include "pi_device_effector_controller.hpp"
+#include "pi_device_effector_nello.hpp"
 #include "pi_info.hpp"
 
 Device::Device(const CommandLineArgs& cla)
@@ -585,6 +587,10 @@ Device* Device::new_device(const DeviceConfig& cfg_model, const DeviceConfig& cf
                     p_device = new DeviceArm(cla);
                     PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceArm (controller) for %s_%s",
                             cla.device_model.c_str(), cla.device_id.c_str());
+                } else if (arm_type == cfg_model.val_arm_type_nello) {
+                    p_device = new DeviceArmNello(cla);
+                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceArmNello for %s_%s",
+                            cla.device_model.c_str(), cla.device_id.c_str());
                 } else {
                     PI_ERROR("Invalid arm type: %s", arm_type.c_str());
                     return nullptr;
@@ -604,6 +610,10 @@ Device* Device::new_device(const DeviceConfig& cfg_model, const DeviceConfig& cf
                 } else if (effector_type == cfg_model.val_effector_type_controller) {
                     p_device = new DeviceEffectorController(cla);
                     PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceEffectorController for %s_%s",
+                            cla.device_model.c_str(), cla.device_id.c_str());
+                } else if (effector_type == cfg_model.val_effector_type_nello) {
+                    p_device = new DeviceEffectorNello(cla);
+                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceEffectorNello for %s_%s",
                             cla.device_model.c_str(), cla.device_id.c_str());
                 } else {
                     PI_ERROR("Invalid effector type: %s", effector_type.c_str());

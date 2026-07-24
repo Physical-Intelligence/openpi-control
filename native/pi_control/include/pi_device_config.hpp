@@ -44,10 +44,12 @@ class DeviceConfig {
     const std::string fn_arm_type         = "arm_type";  ///< Field name for arm type.
     const std::string val_arm_type_arx    = "arx";      ///< Value for arm type arx.
     const std::string val_arm_type_controller = "controller";  ///< Value for arms managed by a whole-arm controller (DriverController).
+    const std::string val_arm_type_nello  = "nello";    ///< Value for arm type nello (serial bus-servo arms, e.g. SO-ARM101).
 
     const std::string fn_effector_type                    = "effector_type";     ///< Field name for effector type.
     const std::string val_effector_type_arx                   = "arx";               ///< Value for effector type arx.
     const std::string val_effector_type_controller            = "controller";        ///< Value for effectors managed by a whole-arm controller (DriverController).
+    const std::string val_effector_type_nello                 = "nello";             ///< Value for effector type nello (serial bus-servo grippers, e.g. SO-ARM101).
     const std::string val_effector_type_none                  = "None";             ///< Value for effector type none.
     const std::string fn_effector_control_mode            = "control_mode";      ///< Field name for effector control mode.
     const std::string val_effector_control_mode_torque        = "torque";            ///< Value for effector control mode torque.
@@ -64,6 +66,7 @@ class DeviceConfig {
     const std::string val_driver_type_can        = "CAN";          ///< Value for driver type CAN.
     const std::string val_driver_type_can_encoder = "CAN_ENCODER"; ///< Value for driver type CAN read-only encoder (DriverArxEncoder).
     const std::string val_driver_type_trossen    = "TROSSEN_ETHERNET";  ///< Value for driver type Trossen iNerve controller over Ethernet (DriverTrossen).
+    const std::string val_driver_type_ft         = "FEETECH";      ///< Value for driver type FeeTech SMS/STS serial bus (DriverFt).
     const std::string fn_controller_model        = "controller_model";  ///< Field name for the vendor controller model string (e.g. "wxai_v0").
 
     const std::string fn_algo_type            = "algo_type";   ///< Field name for algorithm type.
@@ -116,6 +119,7 @@ class DeviceConfig {
     const std::string val_servo_model_can_passive_encoder  = "CAN Passive Encoder";   ///< YAM teaching-handle trigger encoder (CAN request/response poll, read-only).
     const std::string val_servo_model_arx_encoder           = "ARX Remote Encoder";     ///< ARX read-only joint encoder (CAN, 2-byte angle, no actuation).
     const std::string val_servo_model_trossen_wxai         = "Trossen WXAI Joint";    ///< One joint of a Trossen WidowX AI arm managed by the iNerve controller (Ethernet).
+    const std::string val_servo_model_ft_sts3215           = "FeeTech STS3215";       ///< FeeTech STS3215 (SO-ARM100/101, Serial); also covers Hiwonder HX-30HM/HX-10HM (identical SMS/STS protocol).
     const std::string fn_servo_id                      = "servo_id";            ///< Field name for servo ID.
     const std::string fn_servo_data_index               = "data_index";          ///< Field name for servo data index.
     const std::string fn_servo_pos_min                  = "pos_min";             ///< Field name for servo position minimum (relative radian).
@@ -137,6 +141,7 @@ class DeviceConfig {
     const std::string fn_servo_ka                        = "kA";                  ///< Field name for servo current value to mA conversion constant.
     const std::string fn_servo_kv                        = "kV";                  ///< Field name for servo velocity value to rpm conversion constant.
     const std::string fn_servo_resolution                = "servo_resolution";    ///< Field name for servo resolution.
+    const std::string fn_servo_prof_accel                 = "prof_accel";          ///< Field name for acceleration for servo profile control.
     const std::string fn_servo_dir_invert                = "dir_invert";          ///< Field name for servo direction invert: inverted = -1, not inverted = 1.
     const std::string fn_servo_zero_pos                  = "zero_pos";            ///< Field name for servo zero position (absolute radian).
     const std::string fn_servo_position_wrap_period      = "position_wrap_period"; ///< Optional single-turn feedback wrap period (relative radian).

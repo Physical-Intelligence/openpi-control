@@ -22,12 +22,14 @@ SUPPORTED_MODELS = (
     "ARX_ENC",
     "ARX_L5",
     "ARX_X5",
+    "SO101",
     "Trossen_wai_ctrl",
     "Yam",
 )
 SUPPORTED_EFFECTORS = (
     "E_ARX",
     "E_ARX_ENC",
+    "E_SO101",
     "E_Trossen_ctrl",
     "E_Yam",
     "E_Yam_Handle",
