@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from dataclasses import dataclass
@@ -35,6 +36,54 @@ class SocketCanConnection:
     def __post_init__(self) -> None:
         if not self.interface or "/" in self.interface:
             raise ConfigurationError("SocketCAN interface must be a simple interface name")
+
+
+@dataclass(frozen=True, slots=True)
+class EthernetConnection:
+    """A whole-arm Ethernet controller (e.g. Trossen iNerve) at a fixed IPv4 address."""
+
+    ip: str
+
+    def __post_init__(self) -> None:
+        try:
+            ipaddress.IPv4Address(self.ip)
+        except ValueError as err:
+            raise ConfigurationError(
+                f"invalid controller IPv4 address {self.ip!r} for Ethernet connection"
+            ) from err
+
+
+@dataclass(frozen=True, slots=True)
+class SerialConnection:
+    """A USB-serial bus-servo chain (e.g. SO-ARM101 FeeTech) at a tty device path."""
+
+    device: str
+
+    def __post_init__(self) -> None:
+        if not self.device.startswith("/dev/"):
+            raise ConfigurationError(
+                f"serial connection device must be a /dev path, got {self.device!r}"
+            )
+
+
+ArmConnection = SocketCanConnection | EthernetConnection | SerialConnection
+
+
+def connection_for_interface(interface: str) -> ArmConnection:
+    """Build the arm connection for one bus interface string from a runtime config.
+
+    The runtime config stores the interface part of a bus spec ("can:<iface>",
+    "eth:<ip>", or "serial:<device>"). The three forms never overlap: an IPv4
+    literal selects a whole-arm Ethernet controller, a /dev path selects a
+    USB-serial bus, anything else is a SocketCAN interface name.
+    """
+    if interface.startswith("/dev/"):
+        return SerialConnection(interface)
+    try:
+        ipaddress.IPv4Address(interface)
+    except ValueError:
+        return SocketCanConnection(interface)
+    return EthernetConnection(interface)
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +186,7 @@ class ArmConfig:
 
     name: str
     model: str
-    connection: SocketCanConnection
+    connection: ArmConnection
     instance_config: Path | None = None
     effector_model: str | None = None
     effector_instance_config: Path | None = None
@@ -236,3 +285,13 @@ class ArmConfig:
         """True when the model declares read_only (leader-only, no actuation, e.g. ARX_ENC)."""
         data = json.loads(self.resolve_assets().model_config.read_text())
         return bool(data.get("read_only", False))
+
+    def catalog_baudrate(self) -> int:
+        """Bus baud rate declared by the model catalog (required for serial buses)."""
+        data = json.loads(self.resolve_assets().model_config.read_text())
+        baudrate = data.get("catalog", {}).get("baudrate")
+        if not isinstance(baudrate, int) or baudrate <= 0:
+            raise ConfigurationError(
+                f"model {self.model!r} catalog does not declare a positive integer baudrate"
+            )
+        return baudrate

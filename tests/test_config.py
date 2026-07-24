@@ -3,7 +3,15 @@ from pathlib import Path
 
 import pytest
 
-from openpi_control import ArmConfig, ConfigurationError, InputLayout, SocketCanConnection
+from openpi_control import (
+    ArmConfig,
+    ConfigurationError,
+    EthernetConnection,
+    InputLayout,
+    SerialConnection,
+    SocketCanConnection,
+    connection_for_interface,
+)
 from openpi_control.config import SUPPORTED_MODELS
 from openpi_control.protocol import topics_for
 
@@ -21,6 +29,19 @@ def test_physical_model_catalog_is_complete(model: str) -> None:
     # must therefore never declare "Algo": robot-test 1.1.1 configs say "KDL"
     # (overridden to Pinocchio), openpi-tuned configs say "Pinocchio" directly.
     assert json.loads(assets.model_config.read_text())["algo_type"] in ("Pinocchio", "KDL")
+
+
+def test_connection_for_interface_dispatches_on_the_interface_form() -> None:
+    assert connection_for_interface("can_left") == SocketCanConnection("can_left")
+    assert connection_for_interface("192.168.1.11") == EthernetConnection("192.168.1.11")
+    assert connection_for_interface("/dev/serial/by-id/usb-test-if00") == SerialConnection(
+        "/dev/serial/by-id/usb-test-if00"
+    )
+
+
+def test_serial_connection_requires_a_dev_path() -> None:
+    with pytest.raises(ConfigurationError, match="/dev path"):
+        SerialConnection("ttyUSB0")
 
 
 def test_logical_identity_is_separate_from_instance_config(tmp_path: Path) -> None:
