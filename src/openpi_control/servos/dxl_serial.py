@@ -15,6 +15,7 @@ from __future__ import annotations
 from openpi_control.servos import buses
 
 PORT_TYPE = buses.PORT_TYPE_SERIAL
+WHOLE_ARM_ZERO = False
 
 
 def set_zero(bus: object, servo_id: int) -> str | None:
