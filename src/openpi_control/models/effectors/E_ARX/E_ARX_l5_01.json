@@ -5,8 +5,8 @@
     "effector_type": "can",
     "spring_effect": false,
     "control_mode": "torque",
-    "dist_to_torque_const": 6.67,
-    "grip_spring_offset": 0.2,
+    "dist_to_torque_const": 4.44,
+    "grip_spring_offset": 0.1,
     "base_rpy": [
         0,
         0,
