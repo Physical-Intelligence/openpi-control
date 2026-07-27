@@ -1,31 +1,31 @@
 /*!
- * @file pi_device_effector_arx.cpp
- * @brief Implementation of the DeviceEffectorArx class for ARX effector device control.
+ * @file pi_device_effector_can.cpp
+ * @brief Implementation of the DeviceEffectorCan class for MIT-mode CAN effector device control.
  */
 
 #include <unistd.h>
 
-#include "pi_device_effector_arx.hpp"
+#include "pi_device_effector_can.hpp"
 #include "pi_joint.hpp"
 
 #define INIT_MOVE_TRY_MAX 200  ///< Maximum number of attempts to move effector to zero position
 
-DeviceEffectorArx::DeviceEffectorArx(const CommandLineArgs& cla) : DeviceEffector(cla) {}
+DeviceEffectorCan::DeviceEffectorCan(const CommandLineArgs& cla) : DeviceEffector(cla) {}
 
-DeviceEffectorArx::~DeviceEffectorArx() {}
+DeviceEffectorCan::~DeviceEffectorCan() {}
 
-ReturnCode DeviceEffectorArx::set_control_mode(Role target_role, ControlModeIntent intent) {
+ReturnCode DeviceEffectorCan::set_control_mode(Role target_role, ControlModeIntent intent) {
     (void)target_role;
     (void)intent;
     ramped_target_initialized_ = false;
-    // ARX family: control-mode switching is not required here.
+    // MIT-mode CAN devices: control-mode switching is not required here.
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DeviceEffectorArx::move_joint_with_torque(Joint* p_joint, float target_pos) {
+ReturnCode DeviceEffectorCan::move_joint_with_torque(Joint* p_joint, float target_pos) {
     ReturnCode return_code = ReturnCode::SUCCESS;
 
-    // monopi ControlFollowGripper (control_follow.cc): the gripper is a
+    // Reference gripper controller: the gripper is a
     // host-side torque spring,
     //     torque = clamp(constant * (goal - measured - offset), +/-bound),
     // sent as a torque-only command (kp=0; the servo's kd supplies damping).
@@ -34,7 +34,7 @@ ReturnCode DeviceEffectorArx::move_joint_with_torque(Joint* p_joint, float targe
     // current (the i2rt failure mode: overheated gripper motors, snapped
     // fingers). The torque is linear and continuous through zero error --
     // saturation only flattens the tails -- so nothing sign-flips or chatters
-    // near the target. Match monopi's non-L5 ARX command ramp: initialize at
+    // near the target. Match the reference non-L5 ARX command ramp: initialize at
     // the measured position and move the internal goal by at most 1 rad/tick.
     const float clipped_target_pos =
         p_joint->clipping(target_pos, p_joint->get_pos_min_relative(), p_joint->get_pos_max_relative());
@@ -56,7 +56,7 @@ ReturnCode DeviceEffectorArx::move_joint_with_torque(Joint* p_joint, float targe
     // the sign mapped back into the motor frame.
     torque *= p_joint->get_dir_invert();
 
-    // monopi sends kp=0 with the gripper servo's configured kd=0.1. Keep that
+    // The reference controller sends kp=0 with the gripper servo's configured kd=0.1. Keep that
     // damping local to this controller so arm gravity/torque frames retain
     // their existing zero-kd behavior.
     return_code = p_joint->apply_torque_with_damping(torque);

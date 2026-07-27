@@ -4,7 +4,9 @@
  */
 
 #pragma once
-#include "pi_driver_arx.hpp"
+#include <optional>
+
+#include "pi_driver_can_mit.hpp"
 #include "pi_servo.hpp"
 
 /*!
@@ -132,7 +134,7 @@ class ServoDm : public Servo {
 
     /*!
      * @brief Age of the newest parsed CAN frame for this servo, from the
-     *        DriverArx receive cache (``last_update_perf_``). Note this is
+     *        DriverCanMit receive cache (``last_update_perf_``). Note this is
      *        bus liveness, not position freshness: some frame types (ENCOS
      *        config acks, non-position ack statuses) refresh the stamp
      *        without updating the cached position.
@@ -144,7 +146,7 @@ class ServoDm : public Servo {
      * @brief Confirms that ``received_servo_data_`` for this servo has been
      *        populated by at least one parsed status frame. DM motors do not
      *        broadcast status spontaneously, so without a successful
-     *        ``DriverArx::enable()`` response parse the cache stays zero and
+     *        ``DriverCanMit::enable()`` response parse the cache stays zero and
      *        ``curr_pos_abs_`` would be a stale 0. The check looks at
      *        ``motor_id_`` which is zero only when the cache has never been
      *        touched (real DM IDs are 1+).
@@ -206,12 +208,12 @@ class ServoDm : public Servo {
      * @param p_frame Pointer to the received CAN frame.
      * @param p_received_servo_data Pointer to the buffer where parsed servo data will be stored.
      * @param p_find_data_index Function pointer to find the data buffer index for a given servo ID.
-     * @param p_driver_arx Pointer to the CAN driver object.
+     * @param p_driver_can_mit Pointer to the CAN driver object.
      * @return ReturnCode indicating success or failure.
      */
     static ReturnCode parse_dm_servo_status(DriverCan::can_frame_t* p_frame, ReceivedServoData* p_received_servo_data,
-                                            DriverArx::func_find_data_index_t p_find_data_index,
-                                            DriverArx* p_driver_arx);
+                                            DriverCanMit::func_find_data_index_t p_find_data_index,
+                                            DriverCanMit* p_driver_can_mit);
 
     /*!
      * @brief Parses an Encos servo status message from a CAN frame.
@@ -222,7 +224,7 @@ class ServoDm : public Servo {
      */
     static ReturnCode parser_encos_servo_status(DriverCan::can_frame_t* p_frame,
                                                 ReceivedServoData* p_received_servo_data,
-                                                DriverArx::func_find_data_index_t p_find_data_index);
+                                                DriverCanMit::func_find_data_index_t p_find_data_index);
 
     /*!
      * @brief Constructs a CAN command frame for DM servo control.
@@ -342,7 +344,7 @@ class ServoDm : public Servo {
                                             const char* trigger);
     ReturnCode reject_if_thermal_fault_latched() const;
 
-    DriverArx* p_driver_can_ = nullptr;  ///< Pointer to the CAN driver (cast from base Driver pointer).
+    DriverCanMit* p_driver_can_ = nullptr;  ///< Pointer to the CAN driver (cast from base Driver pointer).
     HoldChecker checker_motor_no_response_;  ///< Checker for detecting motor communication failures.
     bool motor_moved_ = false;  ///< Flag indicating whether the motor has moved from its initial position.
     uint8_t last_reported_fault_code_ = 0;  ///< Last DM fault logged, to avoid repeating it every control loop.

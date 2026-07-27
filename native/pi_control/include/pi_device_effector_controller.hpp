@@ -4,20 +4,20 @@
  */
 #pragma once
 
-#include "pi_device_effector_arx.hpp"
+#include "pi_device_effector_can.hpp"
 
 /*!
  * @class DeviceEffectorController
  * @brief Effector device for grippers driven by a whole-arm controller (DriverController).
  *
- * Inherits the ARX torque-gripper motion logic (distance-to-torque via
+ * Inherits the CAN torque-gripper motion logic (distance-to-torque via
  * apply_torque_with_damping(), which ServoController maps to controller
- * external efforts). Unlike ARX, controller-managed grippers need real
+ * external efforts). Unlike CAN grippers, controller-managed grippers need real
  * leader/follower mode switching (position vs external effort on the vendor
  * controller), so set_control_mode() restores the DeviceEffector base
  * behavior of delegating to Joint::change_control_mode_for_{leader,follower}().
  */
-class DeviceEffectorController : public DeviceEffectorArx {
+class DeviceEffectorController : public DeviceEffectorCan {
    public:
     /*!
      * @brief Constructor.
@@ -32,7 +32,7 @@ class DeviceEffectorController : public DeviceEffectorArx {
 
     /*!
      * @brief Delegates mode switching to the joints (DeviceEffector base
-     *        behavior), undoing the ARX no-op override.
+     *        behavior), undoing the CAN no-op override.
      * @param target_role Target role (LEADER or FOLLOWER).
      * @param intent Control mode intent.
      * @return ReturnCode indicating success or failure.

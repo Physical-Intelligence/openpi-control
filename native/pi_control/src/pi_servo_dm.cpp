@@ -41,7 +41,7 @@ const ServoDmParam g_servo_dm_param_arx_encoder(0.0f, 0.0f, 0.0f, 0.0f, -12.5f, 
 
 ServoDm::ServoDm(Device* p_device, Joint* p_joint, Driver* p_driver)
     : Servo(p_device, p_joint, p_driver), checker_motor_no_response_(MAX_CNT_MOTOR_NO_RESPONSE_INITIAL) {
-    p_driver_can_ = dynamic_cast<DriverArx*>(p_driver);
+    p_driver_can_ = dynamic_cast<DriverCanMit*>(p_driver);
 }
 
 ServoDm::~ServoDm() {
@@ -175,7 +175,7 @@ ReturnCode ServoDm::init_current_estimation(std::string& servo_model, const Devi
 
 ReturnCode ServoDm::init_config_model(const json& servo_config, const DeviceConfig* p_config) {
     if (p_driver_can_ == nullptr) {
-        PI_ERROR("DM servo requires an ARX CAN driver");
+        PI_ERROR("DM servo requires a DriverCanMit driver");
         return ReturnCode::NOT_INITIALIZED;
     }
 
@@ -235,7 +235,7 @@ ReturnCode ServoDm::start_hardware() {
             get_device_type_belong_to() == DeviceType::EFFECTOR) {
             const DmServoStatusInfo& status = dm_servo_status_info(static_cast<uint8_t>(status_code));
             if (status.is_thermal_fault) {
-                // DriverArx cached the fault response before returning. Refresh the
+                // DriverCanMit cached the fault response before returning. Refresh the
                 // servo fields so the terminal fault message reports that snapshot.
                 p_driver_can_->read_hardware_values(this);
                 idc_current_ = current_estimation_.estimate_idc_calibrated(
@@ -261,7 +261,7 @@ ReturnCode ServoDm::verify_position_fresh() {
         return ReturnCode::NOT_INITIALIZED;
     }
     // DM/ENCOS slot is considered fresh once the asynchronous CAN parser (or the enable
-    // response path in DriverArx::enable()) has written into received_servo_data_. The
+    // response path in DriverCanMit::enable()) has written into received_servo_data_. The
     // motor_id_ field is zero-initialised and motor IDs start at 1, so a non-zero value
     // proves at least one status frame was parsed.
     const int cached_id = p_driver_can_->get_received_motor_id(data_index_);
@@ -440,8 +440,8 @@ ReturnCode ServoDm::apply_torque_with_damping(float torque) {
 }
 
 ReturnCode ServoDm::parse_dm_servo_status(DriverCan::can_frame_t* p_frame, ReceivedServoData* p_received_servo_data,
-                                          DriverArx::func_find_data_index_t p_find_data_index,
-                                          DriverArx* p_driver_arx) {
+                                          DriverCanMit::func_find_data_index_t p_find_data_index,
+                                          DriverCanMit* p_driver_can_mit) {
     if (p_frame == nullptr) {
         PI_ERROR("Invalid CAN frame pointer");
         return ReturnCode::INVALID_PARAM;
@@ -457,8 +457,8 @@ ReturnCode ServoDm::parse_dm_servo_status(DriverCan::can_frame_t* p_frame, Recei
         return ReturnCode::INVALID_PARAM;
     }
 
-    if (p_driver_arx == nullptr) {
-        PI_ERROR("Invalid ARX driver pointer");
+    if (p_driver_can_mit == nullptr) {
+        PI_ERROR("Invalid CAN-MIT driver pointer");
         return ReturnCode::INVALID_PARAM;
     }
 
@@ -521,7 +521,7 @@ ReturnCode ServoDm::parse_dm_servo_status(DriverCan::can_frame_t* p_frame, Recei
 }
 
 ReturnCode ServoDm::parser_encos_servo_status(DriverCan::can_frame_t* p_frame, ReceivedServoData* p_received_servo_data,
-                                              DriverArx::func_find_data_index_t p_find_data_index) {
+                                              DriverCanMit::func_find_data_index_t p_find_data_index) {
     if (p_frame == nullptr) {
         PI_ERROR("Invalid CAN frame pointer");
         return ReturnCode::INVALID_PARAM;
@@ -553,7 +553,7 @@ ReturnCode ServoDm::parser_encos_servo_status(DriverCan::can_frame_t* p_frame, R
     if (data_len < 8) {
         // Short frames on an ENCOS channel are config-set acknowledgements (e.g.
         // the ack for the CAN-timeout write sent by
-        // DriverArx::arm_comm_loss_protection), not status reports. Byte0[0:4]
+        // DriverCanMit::arm_comm_loss_protection), not status reports. Byte0[0:4]
         // is NOT a motor-error field in these frames, so only stamp bus
         // liveness -- never the error/position/velocity telemetry.
         p_received_servo_data[data_index].motor_id_ = motor_id;
@@ -877,14 +877,14 @@ ReturnCode ServoDm::read_hardware_values() {
     // hold, so SAFE_MODE_SIG never fired in steady state.
     //
     // Threshold selection:
-    //   ARX_STALE_FRAME_AGE_INITIAL_MS while ``motor_moved_`` is false (the
+    //   CAN_MIT_STALE_FRAME_AGE_INITIAL_MS while ``motor_moved_`` is false (the
     //     servo has not yet produced any status frame for this session --
     //     bus may still be coming up after enable handshake)
-    //   ARX_STALE_FRAME_AGE_NORMAL_MS once any frame has been seen
+    //   CAN_MIT_STALE_FRAME_AGE_NORMAL_MS once any frame has been seen
     //     (steady-state operation; tighter so a real cable break is
     //     detected within ~10 s rather than ~50 s)
     //
-    // Constants live in pi_control.hpp so the DriverArx group_read path and
+    // Constants live in pi_control.hpp so the DriverCanMit group_read path and
     // this per-servo path agree on the threshold.
     prof_time_t last_update_perf;
     if (p_driver_can_ != nullptr) {
@@ -892,8 +892,8 @@ ReturnCode ServoDm::read_hardware_values() {
     }
     const bool last_update_is_zero = Profile::is_zero(last_update_perf);
     const prof_time_msec_t threshold_ms = motor_moved_
-        ? static_cast<prof_time_msec_t>(ARX_STALE_FRAME_AGE_NORMAL_MS)
-        : static_cast<prof_time_msec_t>(ARX_STALE_FRAME_AGE_INITIAL_MS);
+        ? static_cast<prof_time_msec_t>(CAN_MIT_STALE_FRAME_AGE_NORMAL_MS)
+        : static_cast<prof_time_msec_t>(CAN_MIT_STALE_FRAME_AGE_INITIAL_MS);
     bool stale = false;
     prof_time_msec_t age_ms = 0;
     if (last_update_is_zero) {

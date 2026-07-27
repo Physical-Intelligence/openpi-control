@@ -63,8 +63,8 @@
 // Servo-side CAN communication-loss protection. The DM TIMEOUT register (0x09) auto-disables
 // the motor (latched 0xD error) when no frame arrives within the window; the ENCOS heartbeat
 // window behaves equivalently. The window survives in DM servo RAM between runs while power
-// stays on, so DriverArx::enable() explicitly disarms it (writes DM_SERVO_CAN_TIMEOUT_DISARM)
-// right after each enable handshake, and DriverArx::arm_comm_loss_protection() asserts the
+// stays on, so DriverCanMit::enable() explicitly disarms it (writes DM_SERVO_CAN_TIMEOUT_DISARM)
+// right after each enable handshake, and DriverCanMit::arm_comm_loss_protection() asserts the
 // per-device policy in one pass right before the command stream starts.
 //
 // Policy (Device::wants_comm_loss_stop()): what "keep executing the last command" means on a
@@ -91,19 +91,19 @@
 // control loop compares the wall-clock age of each servo's most recent parsed status frame
 // (ReceivedServoData::last_update_perf_) against these thresholds. Used by BOTH the per-servo
 // path (ServoDm::read_hardware_values -> SAFE_MODE_SIG) and the bulk path
-// (DriverArx::group_read_hardware_values -> dead_servo_ids -> device recovery), so the two
+// (DriverCanMit::group_read_hardware_values -> dead_servo_ids -> device recovery), so the two
 // detectors agree. INITIAL applies until the first frame has ever been parsed for the driver
 // (bus may still be coming up after the enable handshakes); NORMAL applies afterwards and
 // never relaxes back.
-#define ARX_STALE_FRAME_AGE_NORMAL_MS             10000                ///< Frame age (ms) before a known-alive servo is declared dead. 10 s.
-#define ARX_STALE_FRAME_AGE_INITIAL_MS            2500                 ///< Frame age (ms) for the start-up phase (before any frame has ever been parsed). 2.5 s.
+#define CAN_MIT_STALE_FRAME_AGE_NORMAL_MS             10000                ///< Frame age (ms) before a known-alive servo is declared dead. 10 s.
+#define CAN_MIT_STALE_FRAME_AGE_INITIAL_MS            2500                 ///< Frame age (ms) for the start-up phase (before any frame has ever been parsed). 2.5 s.
 
-// Warn-only telemetry-stall diagnostic (DriverArx::group_read_hardware_values): a servo whose
+// Warn-only telemetry-stall diagnostic (DriverCanMit::group_read_hardware_values): a servo whose
 // newest frame is older than this gets one edge-triggered PI_WARN ("telemetry stalled") and one
 // on recovery ("resumed after N ms"). Far below the dead thresholds above on purpose -- the
 // point is to leave evidence in the node log for stalls that silently feed a cached position
 // to the policy but never trip the 10 s dead detector.
-#define ARX_STALL_WARN_AGE_MS                     250                  ///< Frame age (ms) that triggers the warn-only stall log.
+#define CAN_MIT_STALL_WARN_AGE_MS                     250                  ///< Frame age (ms) that triggers the warn-only stall log.
 
 // Whole-arm controller (DriverController) stall watchdog. Vendor controller
 // stacks (Trossen iNerve etc.) keep streaming the last command from a driver-

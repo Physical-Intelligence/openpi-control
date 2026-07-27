@@ -212,7 +212,7 @@ class Servo {
     /*!
      * @brief Enables or disables torque output of the servo.
      *
-     * Virtual so device code (e.g. DeviceEffectorNello) can toggle torque on
+     * Virtual so device code (e.g. DeviceEffectorSerial) can toggle torque on
      * any bus-servo family without casting to a concrete type. The default
      * implementation fast-fails for servo families without a torque enable
      * register.
@@ -229,7 +229,7 @@ class Servo {
      * @brief Applies torque while retaining the servo's configured derivative damping.
      *
      * Servo families that do not support a separate damping gain fall back to
-     * their normal torque command. This is used by monopi-style gripper
+     * their normal torque command. This is used by torque-spring gripper
      * control; arm gravity/torque commands continue to use apply_torque().
      *
      * @param torque Torque to be applied in Nm.
@@ -346,7 +346,7 @@ class Servo {
      *        cached position.
      *
      * Servo types whose driver keeps a receive-time stamp (ServoDm via the
-     * DriverArx cache) override this; the base returns -1 (unknown) so
+     * DriverCanMit cache) override this; the base returns -1 (unknown) so
      * publishers can tell "freshness not tracked" apart from a real age.
      *
      * @return Frame age in milliseconds, or -1 when the servo type does not
@@ -374,9 +374,9 @@ class Servo {
      * Move-to-ready and emergency recovery must NOT inherit that weak spring:
      * those moves have to carry the arm against gravity, and at gain 0.1-0.3
      * the wrist joints get kp 1-3, the move stalls, per-joint stuck detection
-     * latches, and the device force-parks mid-recovery and falls. The ARX
+     * latches, and the device force-parks mid-recovery and falls. The CAN-MIT
      * family has no control-mode switch to escape through
-     * (DeviceArmArx::set_control_mode is a no-op), so the escape lives here.
+     * (DeviceArmCan::set_control_mode is a no-op), so the escape lives here.
      *
      * @return Adjusted position proportional gain (Kp).
      */

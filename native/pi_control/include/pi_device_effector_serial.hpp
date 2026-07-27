@@ -1,32 +1,32 @@
 /*!
- * @file pi_device_effector_nello.hpp
- * @brief Nello effector device implementation.
+ * @file pi_device_effector_serial.hpp
+ * @brief serial bus-servo effector device implementation.
  */
 #pragma once
 #include "pi_device_effector.hpp"
 
 /*!
- * @brief Nello effector device implementation.
+ * @brief serial bus-servo effector device implementation.
  */
-class DeviceEffectorNello : public DeviceEffector {
+class DeviceEffectorSerial : public DeviceEffector {
    public:
     /*!
      * @brief Constructor.
      * @param cla Command-line arguments.
      */
-    DeviceEffectorNello(const CommandLineArgs& cla);
+    DeviceEffectorSerial(const CommandLineArgs& cla);
 
     /*!
      * @brief Destructor.
      */
-    ~DeviceEffectorNello();
+    ~DeviceEffectorSerial();
 
     //
     // Override functions
     //
 
     /*!
-     * @brief Initializes the Nello effector device.
+     * @brief Initializes the serial bus-servo effector device.
      * @param cla Command-line arguments.
      * @param argc Argument count.
      * @param argv Argument values.
@@ -52,9 +52,9 @@ class DeviceEffectorNello : public DeviceEffector {
     virtual ReturnCode move_joint_with_torque(Joint* p_joint, float target_pos) override;
 
     /*!
-     * @brief Sets control mode for Nello effector.
+     * @brief Sets control mode for serial bus-servo effector.
      *
-     * Nello: leader and follower require different servo operation modes, and follower behavior also depends on
+     * Serial bus-servo devices: leader and follower require different servo operation modes, and follower behavior also depends on
      * effector control type (torque vs position). READY_MOVE_OVERRIDE forces a safe position-based mode via the
      * base-class override flag.
      */

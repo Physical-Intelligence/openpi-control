@@ -1,26 +1,26 @@
 /*!
- * @file pi_device_effector_arx.hpp
- * @brief ARX effector device implementation.
+ * @file pi_device_effector_can.hpp
+ * @brief MIT-mode CAN effector device implementation.
  */
 
 #pragma once
 #include "pi_device_effector.hpp"
 
 /*!
- * @brief ARX effector device implementation.
+ * @brief MIT-mode CAN effector device implementation.
  */
-class DeviceEffectorArx : public DeviceEffector {
+class DeviceEffectorCan : public DeviceEffector {
 public:
     /*!
      * @brief Constructor.
      * @param cla Command-line arguments.
      */
-    DeviceEffectorArx(const CommandLineArgs& cla);
+    DeviceEffectorCan(const CommandLineArgs& cla);
 
     /*!
      * @brief Destructor.
      */
-    ~DeviceEffectorArx();
+    ~DeviceEffectorCan();
 
     //
     // Override functions
@@ -35,9 +35,9 @@ public:
     virtual ReturnCode move_joint_with_torque(Joint *p_joint, float target_pos) override;
 
     /*!
-     * @brief Sets control mode for ARX effector.
+     * @brief Sets control mode for MIT-mode CAN effector.
      *
-     * ARX family does not require special leader/follower mode switching here; enabling and
+     * MIT-mode CAN devices do not require special leader/follower mode switching here; enabling and
      * the regular command path is sufficient. We keep this as a no-op to satisfy Device API.
      */
     virtual ReturnCode set_control_mode(Role target_role, ControlModeIntent intent) override;

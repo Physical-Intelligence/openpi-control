@@ -1,8 +1,8 @@
 {
-    "config_version": "1.1.1",
+    "config_version": "1.3.1",
     "device_model": "E_SO101",
     "device_type": "effector",
-    "effector_type": "nello",
+    "effector_type": "serial",
     "spring_effect": false,
     "control_mode": "position",
     "base_rpy": [

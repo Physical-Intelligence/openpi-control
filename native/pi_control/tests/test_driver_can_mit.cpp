@@ -19,18 +19,22 @@
 #include "pi_device.hpp"
 
 #define private public
-#include "pi_driver_arx.hpp"
+#include "pi_driver_can_mit.hpp"
 #undef private
 
+#include "pi_algo.hpp"
+#include "pi_algo_pino.hpp"
+#include "pi_device_arm_can.hpp"
+#include "pi_device_arm_serial.hpp"
 #include "pi_driver_arx_encoder.hpp"
 #include "pi_servo_can_encoder.hpp"
 #include "pi_servo_dm.hpp"
 
 namespace {
 
-class DriverArxTestDevice : public Device {
+class DriverCanMitTestDevice : public Device {
    public:
-    explicit DriverArxTestDevice(const CommandLineArgs& cla) : Device(cla) {}
+    explicit DriverCanMitTestDevice(const CommandLineArgs& cla) : Device(cla) {}
 
     ReturnCode apply_action(const MsgJoints&) override { return ReturnCode::SUCCESS; }
     ReturnCode get_observation(MsgJoints&) override { return ReturnCode::SUCCESS; }
@@ -44,17 +48,17 @@ class DriverArxTestDevice : public Device {
     ReturnCode set_control_mode(Role, ControlModeIntent) override { return ReturnCode::SUCCESS; }
 };
 
-class DriverArxTestOtherDriver : public Driver {
+class DriverCanMitTestOtherDriver : public Driver {
    public:
-    DriverArxTestOtherDriver(Device* p_device, const CommandLineArgs& cla) : Driver(p_device, cla) {}
+    DriverCanMitTestOtherDriver(Device* p_device, const CommandLineArgs& cla) : Driver(p_device, cla) {}
 
     ReturnCode open(int) override { return ReturnCode::SUCCESS; }
     ReturnCode close() override { return ReturnCode::SUCCESS; }
 };
 
-class DriverArxTestServoDm : public ServoDm {
+class DriverCanMitTestServoDm : public ServoDm {
    public:
-    DriverArxTestServoDm(Device* p_device, Driver* p_driver, const ServoDmParam* p_param, int id, ServoType type)
+    DriverCanMitTestServoDm(Device* p_device, Driver* p_driver, const ServoDmParam* p_param, int id, ServoType type)
         : ServoDm(p_device, nullptr, p_driver) {
         id_ = id;
         data_index_ = 0;
@@ -62,19 +66,20 @@ class DriverArxTestServoDm : public ServoDm {
         p_servo_param_ = p_param;
     }
 
-    bool has_arx_driver() const { return p_driver_can_ != nullptr; }
+    bool has_can_mit_driver() const { return p_driver_can_ != nullptr; }
+    const ServoParam* servo_param() const { return p_servo_param_; }
 };
 
-TEST(ServoPositionWrap, FreshArxCacheRecoversYambotOpenGripperReadingsAfterPowerCycle) {
+TEST(ServoPositionWrap, FreshCanMitCacheRecoversYambotOpenGripperReadingsAfterPowerCycle) {
     constexpr float kTwoPi = 6.283185307179586f;
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    DriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    DriverCanMit driver(&device, cla);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
 
     for (const float absolute_position : {1.165f, 0.979f}) {
-        DriverArxTestServoDm servo(&device, &driver, &param, 7, ServoType::DM_4310);
+        DriverCanMitTestServoDm servo(&device, &driver, &param, 7, ServoType::DM_4310);
         servo.dir_invert_ = -1;
         servo.zero_pos_abs_ = 0.0f;
         servo.pos_min_rel_ = 0.0f;
@@ -92,11 +97,11 @@ TEST(ServoPositionWrap, FreshArxCacheRecoversYambotOpenGripperReadingsAfterPower
 TEST(ServoPositionWrap, LeavesTrueOutOfRangePositionForNormalLimitHandling) {
     constexpr float kTwoPi = 6.283185307179586f;
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    DriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    DriverCanMit driver(&device, cla);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 7, ServoType::DM_4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 7, ServoType::DM_4310);
     servo.dir_invert_ = -1;
     servo.zero_pos_abs_ = 0.0f;
     servo.pos_min_rel_ = 0.0f;
@@ -109,16 +114,61 @@ TEST(ServoPositionWrap, LeavesTrueOutOfRangePositionForNormalLimitHandling) {
     EXPECT_FLOAT_EQ(servo.get_pos_rad_relative(), 12.0f);
 }
 
-class SocketBackedDriverArx : public DriverArx {
+TEST(ServoGainOverride, IndividualConfigOverridesPositionGains) {
+    // An instance config can select a site-specific gain profile (e.g. the
+    // high-gain kp/kd variant for A/B benchmarking); fields it omits keep the
+    // model config values.
+    CommandLineArgs cla{};
+    DriverCanMitTestDevice device(cla);
+    DriverCanMit driver(&device, cla);
+    ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
+                       0.2f, 0.3f, 0.1f};
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 3, ServoType::DM_4310);
+    servo.pos_kp_ = 150.0f;
+    servo.pos_ki_ = 0.5f;
+    servo.pos_kd_ = 12.0f;
+
+    DeviceConfig config;
+    const json overrides = json::parse(R"({"servo_id": 3, "pos_kp": 40.0, "pos_kd": 1.2})");
+    ASSERT_EQ(servo.init_config_individual(overrides, &config), ReturnCode::SUCCESS);
+    EXPECT_FLOAT_EQ(servo.pos_kp_, 40.0f);
+    EXPECT_FLOAT_EQ(servo.pos_ki_, 0.5f);
+    EXPECT_FLOAT_EQ(servo.pos_kd_, 1.2f);
+
+    const json no_overrides = json::parse(R"({"servo_id": 3})");
+    ASSERT_EQ(servo.init_config_individual(no_overrides, &config), ReturnCode::SUCCESS);
+    EXPECT_FLOAT_EQ(servo.pos_kp_, 40.0f);
+    EXPECT_FLOAT_EQ(servo.pos_ki_, 0.5f);
+    EXPECT_FLOAT_EQ(servo.pos_kd_, 1.2f);
+}
+
+TEST(FollowerGravityCompensation, CapabilityGatesMatchArmAndAlgoTypes) {
+    // DeviceArm::init fast-fails a --follower_gravity_compensation request
+    // unless the arm takes a torque feed-forward AND the algo has a real
+    // gravity model; these are the two capability probes it consults.
+    CommandLineArgs cla{};
+    DeviceArmCan can_arm(cla);
+    EXPECT_TRUE(can_arm.supports_torque_feed_forward());
+    DeviceArmSerial serial_arm(cla);
+    EXPECT_FALSE(serial_arm.supports_torque_feed_forward());
+
+    DriverCanMitTestDevice device(cla);
+    Algo base_algo(&device, cla);
+    EXPECT_FALSE(base_algo.has_gravity_model());
+    AlgoPino pino_algo(&device, cla);
+    EXPECT_TRUE(pino_algo.has_gravity_model());
+}
+
+class SocketBackedDriverCanMit : public DriverCanMit {
    public:
-    using DriverArx::DriverArx;
+    using DriverCanMit::DriverCanMit;
 
     void adopt_socket(int socket_fd) { sock_ = socket_fd; }
 };
 
-class RestartFailingDriverArx : public DriverArx {
+class RestartFailingDriverCanMit : public DriverCanMit {
    public:
-    using DriverArx::DriverArx;
+    using DriverCanMit::DriverCanMit;
 
     void adopt_socket(int socket_fd) { sock_ = socket_fd; }
 
@@ -139,9 +189,9 @@ class RestartFailingDriverArx : public DriverArx {
     }
 };
 
-class ZeroDescriptorDriverArx : public DriverArx {
+class ZeroDescriptorDriverCanMit : public DriverCanMit {
    public:
-    using DriverArx::DriverArx;
+    using DriverCanMit::DriverCanMit;
 
     void adopt_socket(int socket_fd) { sock_ = socket_fd; }
     void abandon_socket() { sock_ = -1; }
@@ -156,9 +206,9 @@ class ZeroDescriptorDriverArx : public DriverArx {
     size_t send_count_ = 0;
 };
 
-class EnableSendFailingDriverArx : public DriverArx {
+class EnableSendFailingDriverCanMit : public DriverCanMit {
    public:
-    using DriverArx::DriverArx;
+    using DriverCanMit::DriverCanMit;
 
     void adopt_socket(int socket_fd) { sock_ = socket_fd; }
     bool reception_running() const { return is_running_.load(std::memory_order_acquire); }
@@ -171,9 +221,9 @@ class EnableSendFailingDriverArx : public DriverArx {
     size_t send_count_ = 0;
 };
 
-class FailingSendDriverArx : public DriverArx {
+class FailingSendDriverCanMit : public DriverCanMit {
    public:
-    using DriverArx::DriverArx;
+    using DriverCanMit::DriverCanMit;
 
     void adopt_socket(int socket_fd) { sock_ = socket_fd; }
     void abandon_socket() { sock_ = -1; }
@@ -188,10 +238,10 @@ class FailingSendDriverArx : public DriverArx {
     size_t send_count_ = 0;
 };
 
-class SetupSendFailingDriverArx : public DriverArx {
+class SetupSendFailingDriverCanMit : public DriverCanMit {
    public:
-    SetupSendFailingDriverArx(Device* p_device, const CommandLineArgs& cla, size_t fail_on_send)
-        : DriverArx(p_device, cla), fail_on_send_(fail_on_send) {}
+    SetupSendFailingDriverCanMit(Device* p_device, const CommandLineArgs& cla, size_t fail_on_send)
+        : DriverCanMit(p_device, cla), fail_on_send_(fail_on_send) {}
 
     void adopt_socket(int socket_fd) { sock_ = socket_fd; }
     void abandon_socket() { sock_ = -1; }
@@ -221,10 +271,10 @@ class SetupSendFailingDriverArx : public DriverArx {
     size_t send_count_ = 0;
 };
 
-class ScriptedEnableStatusDriverArx : public DriverArx {
+class ScriptedEnableStatusDriverCanMit : public DriverCanMit {
    public:
-    ScriptedEnableStatusDriverArx(Device* p_device, const CommandLineArgs& cla, std::vector<uint8_t> statuses)
-        : DriverArx(p_device, cla), statuses_(std::move(statuses)) {}
+    ScriptedEnableStatusDriverCanMit(Device* p_device, const CommandLineArgs& cla, std::vector<uint8_t> statuses)
+        : DriverCanMit(p_device, cla), statuses_(std::move(statuses)) {}
 
     void adopt_socket(int socket_fd) { sock_ = socket_fd; }
     size_t enable_frame_count() const { return enable_frame_count_; }
@@ -269,9 +319,9 @@ class ScriptedEnableStatusDriverArx : public DriverArx {
     size_t reset_frame_count_ = 0;
 };
 
-class ConcurrentEnableProbeDriverArx : public DriverArx {
+class ConcurrentEnableProbeDriverCanMit : public DriverCanMit {
    public:
-    using DriverArx::DriverArx;
+    using DriverCanMit::DriverCanMit;
 
     void adopt_socket(int socket_fd) { sock_ = socket_fd; }
     bool overlap_detected() const { return overlap_detected_.load(std::memory_order_acquire); }
@@ -332,9 +382,9 @@ class ConcurrentEnableProbeDriverArx : public DriverArx {
     std::atomic<bool> overlap_detected_{false};
 };
 
-class EnableTransactionProbeDriverArx : public DriverArx {
+class EnableTransactionProbeDriverCanMit : public DriverCanMit {
    public:
-    using DriverArx::DriverArx;
+    using DriverCanMit::DriverCanMit;
 
     void adopt_socket(int socket_fd) { sock_ = socket_fd; }
 
@@ -397,17 +447,17 @@ namespace {
 
 // handle_received_message is protected (invoked by the receive loop only);
 // expose it for direct exercise in tests.
-class DriverArxMessageProbe : public DriverArx {
+class DriverCanMitMessageProbe : public DriverCanMit {
    public:
-    using DriverArx::DriverArx;
-    using DriverArx::handle_received_message;
+    using DriverCanMit::DriverCanMit;
+    using DriverCanMit::handle_received_message;
 };
 
 }  // namespace
 
-TEST(DriverArxTransport, RejectsTruncatedReceivedFrames) {
+TEST(DriverCanMitTransport, RejectsTruncatedReceivedFrames) {
     CommandLineArgs cla{};
-    DriverArxMessageProbe driver(nullptr, cla);
+    DriverCanMitMessageProbe driver(nullptr, cla);
     std::vector<uint8_t> truncated_frame(1);
 
     driver.handle_received_message(truncated_frame.data(), truncated_frame.size(), truncated_frame.size());
@@ -427,10 +477,10 @@ class DriverArxEncoderMessageProbe : public DriverArxEncoder {
 
 TEST(DriverArxEncoderDecode, DecodesTwoByteAngleFrameIntoCacheSlot) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
+    DriverCanMitTestDevice device(cla);
     DriverArxEncoderMessageProbe driver(&device, cla);
     ServoDmParam param{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1537, ServoType::ARX_ENCODER);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1537, ServoType::ARX_ENCODER);
     Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
 
     // raw = ARX_ENCODER_ZERO_RAW + 2048 -> +2048 * pi / 4096 = +pi/2 rad.
@@ -451,10 +501,10 @@ TEST(DriverArxEncoderDecode, DecodesTwoByteAngleFrameIntoCacheSlot) {
 
 TEST(DriverArxEncoderDecode, DropsFramesWithWrongDlcOrUnmappedIds) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
+    DriverCanMitTestDevice device(cla);
     DriverArxEncoderMessageProbe driver(&device, cla);
     ServoDmParam param{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1537, ServoType::ARX_ENCODER);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1537, ServoType::ARX_ENCODER);
     Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
 
     // Wrong DLC on a mapped id: not an encoder report, must not touch the slot.
@@ -476,10 +526,10 @@ TEST(DriverArxEncoderDecode, DropsFramesWithWrongDlcOrUnmappedIds) {
 
 TEST(DriverArxEncoderLifecycle, ActuationEntryPointsAreNoOps) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
+    DriverCanMitTestDevice device(cla);
     DriverArxEncoder driver(&device, cla);
     ServoDmParam param{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1537, ServoType::ARX_ENCODER);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1537, ServoType::ARX_ENCODER);
     Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
     // Pre-populate the slot so enable() returns without exhausting the warmup window.
     driver.received_servo_data_[servo.data_index_].motor_id_ = servo.id_;
@@ -494,7 +544,7 @@ TEST(DriverArxEncoderLifecycle, ActuationEntryPointsAreNoOps) {
 
 TEST(DriverArxEncoderLifecycle, EnableFailsFastForUnmappedIds) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
+    DriverCanMitTestDevice device(cla);
     DriverArxEncoder driver(&device, cla);
 
     EXPECT_EQ(driver.enable(1999, static_cast<int>(ServoType::ARX_ENCODER), true), ReturnCode::FAIL);
@@ -502,7 +552,7 @@ TEST(DriverArxEncoderLifecycle, EnableFailsFastForUnmappedIds) {
 
 TEST(ServoDmParser, DmStatusRejectsNullIndexLookup) {
     CommandLineArgs cla{};
-    DriverArx driver(nullptr, cla);
+    DriverCanMit driver(nullptr, cla);
     DriverCan::can_frame_t frame{};
     ReceivedServoData cache[MAX_SERVO_INFO_BUF_SIZE]{};
     frame.can_dlc = 8;
@@ -522,11 +572,11 @@ TEST(ServoDmParser, EncosStatusRejectsNullIndexLookup) {
 
 TEST(ServoDmParser, DmStatusRejectsNullDriver) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    DriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    DriverCanMit driver(&device, cla);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
     Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
 
     DriverCan::can_frame_t frame{};
@@ -534,27 +584,27 @@ TEST(ServoDmParser, DmStatusRejectsNullDriver) {
     frame.can_dlc = 8;
     frame.data[0] = static_cast<uint8_t>(servo.id_);
 
-    EXPECT_EQ(ServoDm::parse_dm_servo_status(&frame, cache, &DriverArx::find_data_index, nullptr),
+    EXPECT_EQ(ServoDm::parse_dm_servo_status(&frame, cache, &DriverCanMit::find_data_index, nullptr),
               ReturnCode::INVALID_PARAM);
 
     Driver::register_servo_data_index(servo.id_, -1, nullptr);
 }
 
-TEST(DriverArxTransport, RejectsServoDataIndexOutsideReceiveCache) {
+TEST(DriverCanMitTransport, RejectsServoDataIndexOutsideReceiveCache) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    DriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    DriverCanMit driver(&device, cla);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
     servo.data_index_ = MAX_SERVO_INFO_BUF_SIZE;
 
     EXPECT_EQ(driver.read_hardware_values(&servo), ReturnCode::INVALID_PARAM);
 }
 
-TEST(DriverArxTransport, RejectsNullEncoderSnapshotOutputs) {
+TEST(DriverCanMitTransport, RejectsNullEncoderSnapshotOutputs) {
     CommandLineArgs cla{};
-    DriverArx driver(nullptr, cla);
+    DriverCanMit driver(nullptr, cla);
     float position = 0;
     float velocity = 0;
     uint8_t digital_inputs = 0;
@@ -566,10 +616,10 @@ TEST(DriverArxTransport, RejectsNullEncoderSnapshotOutputs) {
     EXPECT_FALSE(driver.get_received_encoder_data(0, &position, &velocity, &digital_inputs, nullptr));
 }
 
-TEST(DriverArxTransport, RejectsNonDmServoReads) {
+TEST(DriverCanMitTransport, RejectsNonDmServoReads) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    DriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    DriverCanMit driver(&device, cla);
     ServoCanPassiveEncoder servo(&device, nullptr, &driver);
     servo.id_ = 1;
     servo.data_index_ = 0;
@@ -577,25 +627,25 @@ TEST(DriverArxTransport, RejectsNonDmServoReads) {
     EXPECT_EQ(driver.read_hardware_values(&servo), ReturnCode::INVALID_PARAM);
 }
 
-TEST(ServoDmConstruction, RejectsNonArxDrivers) {
+TEST(ServoDmConstruction, RejectsNonCanMitDrivers) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    DriverArxTestOtherDriver driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    DriverCanMitTestOtherDriver driver(&device, cla);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
 
-    ASSERT_FALSE(servo.has_arx_driver());
+    ASSERT_FALSE(servo.has_can_mit_driver());
     EXPECT_EQ(servo.start_hardware(), ReturnCode::NOT_INITIALIZED);
 }
 
-TEST(ServoDmConstruction, RejectsNonArxDriversDuringModelInitialization) {
+TEST(ServoDmConstruction, RejectsNonCanMitDriversDuringModelInitialization) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    DriverArxTestOtherDriver driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    DriverCanMitTestOtherDriver driver(&device, cla);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
     DeviceConfig config;
     const json servo_config = {
         {config.fn_servo_id, 1},
@@ -606,20 +656,121 @@ TEST(ServoDmConstruction, RejectsNonArxDriversDuringModelInitialization) {
     EXPECT_EQ(servo.init_config_model(servo_config, &config), ReturnCode::NOT_INITIALIZED);
 }
 
-TEST(DriverArxLifecycle, EnablePropagatesReceptionRestartFailure) {
+TEST(EncosMitRangeQuery, BuildsConfigGetFramesForSpdAndTorCodes) {
+    DriverCan::can_frame_t frame{};
+
+    ASSERT_EQ(ServoDm::can_frame_to_get_mit_range_encos_servo(frame, 3, ServoDm::ENCOS_QUERY_TOR_RANGE),
+              ReturnCode::SUCCESS);
+    EXPECT_EQ(frame.can_id, 3u);
+    EXPECT_EQ(frame.can_dlc, 2);
+    EXPECT_EQ(frame.data[0], 0x07 << 5);
+    EXPECT_EQ(frame.data[1], ServoDm::ENCOS_QUERY_TOR_RANGE);
+
+    ASSERT_EQ(ServoDm::can_frame_to_get_mit_range_encos_servo(frame, 3, ServoDm::ENCOS_QUERY_SPD_RANGE),
+              ReturnCode::SUCCESS);
+    EXPECT_EQ(frame.data[1], ServoDm::ENCOS_QUERY_SPD_RANGE);
+
+    EXPECT_EQ(ServoDm::can_frame_to_get_mit_range_encos_servo(frame, 3, 99), ReturnCode::INVALID_PARAM);
+}
+
+TEST(EncosMitRangeQuery, ParsesTypeFiveTorRangeReply) {
+    DriverCan::can_frame_t reply{};
+    reply.can_id = 3;
+    reply.can_dlc = 6;
+    reply.data[0] = 5 << 5;
+    reply.data[1] = ServoDm::ENCOS_QUERY_TOR_RANGE;
+    // TOR range [-42.0, 42.0] Nm at scale 10: raw -420 / 420, big-endian int16.
+    reply.data[2] = 0xFE;
+    reply.data[3] = 0x5C;
+    reply.data[4] = 0x01;
+    reply.data[5] = 0xA4;
+
+    float range_min = 0.0f;
+    float range_max = 0.0f;
+    ASSERT_EQ(ServoDm::parse_mit_range_reply_encos_servo(reply, 3, ServoDm::ENCOS_QUERY_TOR_RANGE,
+                                                         ServoDm::ENCOS_TOR_RANGE_SCALE, range_min, range_max),
+              ReturnCode::SUCCESS);
+    EXPECT_FLOAT_EQ(range_min, -42.0f);
+    EXPECT_FLOAT_EQ(range_max, 42.0f);
+}
+
+TEST(EncosMitRangeQuery, RejectsMismatchedRangeReplies) {
+    DriverCan::can_frame_t reply{};
+    reply.can_id = 3;
+    reply.can_dlc = 6;
+    reply.data[0] = 5 << 5;
+    reply.data[1] = ServoDm::ENCOS_QUERY_TOR_RANGE;
+
+    float range_min = 0.0f;
+    float range_max = 0.0f;
+
+    // Wrong motor id.
+    EXPECT_EQ(ServoDm::parse_mit_range_reply_encos_servo(reply, 4, ServoDm::ENCOS_QUERY_TOR_RANGE,
+                                                         ServoDm::ENCOS_TOR_RANGE_SCALE, range_min, range_max),
+              ReturnCode::FAIL);
+    // Wrong query code echoed (a SPD reply while expecting TOR).
+    EXPECT_EQ(ServoDm::parse_mit_range_reply_encos_servo(reply, 3, ServoDm::ENCOS_QUERY_SPD_RANGE,
+                                                         ServoDm::ENCOS_SPD_RANGE_SCALE, range_min, range_max),
+              ReturnCode::FAIL);
+    // Not a query-ack frame (type 1 telemetry).
+    reply.data[0] = 1 << 5;
+    EXPECT_EQ(ServoDm::parse_mit_range_reply_encos_servo(reply, 3, ServoDm::ENCOS_QUERY_TOR_RANGE,
+                                                         ServoDm::ENCOS_TOR_RANGE_SCALE, range_min, range_max),
+              ReturnCode::FAIL);
+    // Truncated frame.
+    reply.data[0] = 5 << 5;
+    reply.can_dlc = 4;
+    EXPECT_EQ(ServoDm::parse_mit_range_reply_encos_servo(reply, 3, ServoDm::ENCOS_QUERY_TOR_RANGE,
+                                                         ServoDm::ENCOS_TOR_RANGE_SCALE, range_min, range_max),
+              ReturnCode::FAIL);
+}
+
+TEST(EncosMitRangeAdoption, AdoptsSpdButOnlyVerifiesTorAgainstTheCompiledCodec) {
     CommandLineArgs cla{};
-    RestartFailingDriverArx driver(nullptr, cla);
+    DriverCanMitTestDevice device(cla);
+    DriverCanMit driver(&device, cla);
+    // Compiled ENCOS EC-A4310-P2-36 defaults: SPD +-18 rad/s, TOR +-30 Nm.
+    ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -18.0f, 18.0f, -30.0f, 30.0f,
+                       0.2f, 0.3f, 0.1f};
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1, ServoType::ENCOS_A4310);
+
+    // A matching reported range keeps the compiled parameter object.
+    EXPECT_EQ(servo.adopt_encos_mit_range(ServoDm::ENCOS_QUERY_TOR_RANGE, -30.0f, 30.0f), ReturnCode::SUCCESS);
+    EXPECT_EQ(servo.servo_param(), &param);
+
+    // A different TOR range is logged but never adopted: torq_rescale in the
+    // model JSON is conformance-calibrated against the compiled codec, so the
+    // register value must not shift the gravity feed-forward delivery.
+    EXPECT_EQ(servo.adopt_encos_mit_range(ServoDm::ENCOS_QUERY_TOR_RANGE, -42.0f, 42.0f), ReturnCode::SUCCESS);
+    EXPECT_EQ(servo.servo_param(), &param);
+    EXPECT_FLOAT_EQ(((const ServoDmParam*)servo.servo_param())->tor_max_, 30.0f);
+
+    // A different SPD range still repoints the codec to a per-servo override.
+    EXPECT_EQ(servo.adopt_encos_mit_range(ServoDm::ENCOS_QUERY_SPD_RANGE, -20.0f, 20.0f), ReturnCode::SUCCESS);
+    const ServoDmParam* p_adopted = (const ServoDmParam*)servo.servo_param();
+    ASSERT_NE(p_adopted, &param);
+    EXPECT_FLOAT_EQ(p_adopted->vel_max_, 20.0f);
+    EXPECT_FLOAT_EQ(p_adopted->tor_max_, 30.0f);  // untouched fields keep the compiled values
+
+    // A nonsense range is rejected and leaves the codec unchanged.
+    EXPECT_EQ(servo.adopt_encos_mit_range(ServoDm::ENCOS_QUERY_SPD_RANGE, 5.0f, -5.0f), ReturnCode::FAIL);
+    EXPECT_FLOAT_EQ(((const ServoDmParam*)servo.servo_param())->vel_max_, 20.0f);
+}
+
+TEST(DriverCanMitLifecycle, EnablePropagatesReceptionRestartFailure) {
+    CommandLineArgs cla{};
+    RestartFailingDriverCanMit driver(nullptr, cla);
     driver.adopt_socket(42);
 
     EXPECT_EQ(driver.enable(1, static_cast<int>(ServoType::DM_4310), false), ReturnCode::FAIL);
 }
 
-TEST(DriverArxLifecycle, EnableRecoversOneStaleCommunicationLossFault) {
+TEST(DriverCanMitLifecycle, EnableRecoversOneStaleCommunicationLossFault) {
     int sockets[2];
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets), 0);
 
     CommandLineArgs cla{};
-    ScriptedEnableStatusDriverArx driver(nullptr, cla, {0xD, 0x1});
+    ScriptedEnableStatusDriverCanMit driver(nullptr, cla, {0xD, 0x1});
     driver.adopt_socket(sockets[0]);
 
     EXPECT_EQ(driver.enable(1, static_cast<int>(ServoType::DM_4310), true), ReturnCode::SUCCESS);
@@ -631,12 +782,12 @@ TEST(DriverArxLifecycle, EnableRecoversOneStaleCommunicationLossFault) {
     close(sockets[1]);
 }
 
-TEST(DriverArxLifecycle, EnableFailsAfterOneResetForPersistentCommunicationLoss) {
+TEST(DriverCanMitLifecycle, EnableFailsAfterOneResetForPersistentCommunicationLoss) {
     int sockets[2];
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets), 0);
 
     CommandLineArgs cla{};
-    ScriptedEnableStatusDriverArx driver(nullptr, cla, {0xD});
+    ScriptedEnableStatusDriverCanMit driver(nullptr, cla, {0xD});
     driver.adopt_socket(sockets[0]);
 
     EXPECT_EQ(driver.enable(1, static_cast<int>(ServoType::DM_4310), true), ReturnCode::HARDWARE_FAULT);
@@ -648,12 +799,12 @@ TEST(DriverArxLifecycle, EnableFailsAfterOneResetForPersistentCommunicationLoss)
     close(sockets[1]);
 }
 
-TEST(DriverArxLifecycle, DisableDoesNotResetCommunicationLossFault) {
+TEST(DriverCanMitLifecycle, DisableDoesNotResetCommunicationLossFault) {
     int sockets[2];
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets), 0);
 
     CommandLineArgs cla{};
-    ScriptedEnableStatusDriverArx driver(nullptr, cla, {0xD});
+    ScriptedEnableStatusDriverCanMit driver(nullptr, cla, {0xD});
     driver.adopt_socket(sockets[0]);
 
     EXPECT_EQ(driver.enable(1, static_cast<int>(ServoType::DM_4310), false), ReturnCode::HARDWARE_FAULT);
@@ -665,9 +816,9 @@ TEST(DriverArxLifecycle, DisableDoesNotResetCommunicationLossFault) {
     close(sockets[1]);
 }
 
-TEST(DriverArxLifecycle, ResetZeroPositionAcceptsDescriptorZero) {
+TEST(DriverCanMitLifecycle, ResetZeroPositionAcceptsDescriptorZero) {
     CommandLineArgs cla{};
-    ZeroDescriptorDriverArx driver(nullptr, cla);
+    ZeroDescriptorDriverCanMit driver(nullptr, cla);
     driver.adopt_socket(0);
 
     EXPECT_EQ(driver.reset_zero_position(1, static_cast<int>(ServoType::DM_4310)), ReturnCode::SUCCESS);
@@ -676,9 +827,9 @@ TEST(DriverArxLifecycle, ResetZeroPositionAcceptsDescriptorZero) {
     driver.abandon_socket();
 }
 
-TEST(DriverArxTransport, ResetZeroPositionPropagatesSendFailure) {
+TEST(DriverCanMitTransport, ResetZeroPositionPropagatesSendFailure) {
     CommandLineArgs cla{};
-    FailingSendDriverArx driver(nullptr, cla);
+    FailingSendDriverCanMit driver(nullptr, cla);
     driver.adopt_socket(42);
 
     EXPECT_EQ(driver.reset_zero_position(1, static_cast<int>(ServoType::DM_4310)), ReturnCode::BUSY);
@@ -686,14 +837,14 @@ TEST(DriverArxTransport, ResetZeroPositionPropagatesSendFailure) {
     driver.abandon_socket();
 }
 
-TEST(DriverArxTransport, SendCommandPropagatesSendFailure) {
+TEST(DriverCanMitTransport, SendCommandPropagatesSendFailure) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    FailingSendDriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    FailingSendDriverCanMit driver(&device, cla);
     driver.adopt_socket(42);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
     Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
 
     EXPECT_EQ(driver.send_command(&servo, 1.0f, 0.1f, 0.5f, 0.0f, 0.0f), ReturnCode::BUSY);
@@ -702,9 +853,9 @@ TEST(DriverArxTransport, SendCommandPropagatesSendFailure) {
     driver.abandon_socket();
 }
 
-TEST(DriverArxTransport, SendCommandRejectsNullServo) {
+TEST(DriverCanMitTransport, SendCommandRejectsNullServo) {
     CommandLineArgs cla{};
-    FailingSendDriverArx driver(nullptr, cla);
+    FailingSendDriverCanMit driver(nullptr, cla);
     driver.adopt_socket(42);
 
     EXPECT_EQ(driver.send_command(nullptr, 1.0f, 0.1f, 0.5f, 0.0f, 0.0f), ReturnCode::INVALID_PARAM);
@@ -713,16 +864,16 @@ TEST(DriverArxTransport, SendCommandRejectsNullServo) {
     driver.abandon_socket();
 }
 
-TEST(DriverArxConcurrency, ConcurrentCloseAndSendCommandAreRaceFree) {
+TEST(DriverCanMitConcurrency, ConcurrentCloseAndSendCommandAreRaceFree) {
 #if !defined(__linux__)
     GTEST_SKIP() << "socket-backed concurrency assertion currently runs on Linux";
 #else
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    SocketBackedDriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    SocketBackedDriverCanMit driver(&device, cla);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1, ServoType::DM_4310);
     Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
 
     constexpr size_t kRoundCount = 32;
@@ -776,12 +927,12 @@ TEST(DriverArxConcurrency, ConcurrentCloseAndSendCommandAreRaceFree) {
 #endif
 }
 
-TEST(DriverArxConcurrency, ConcurrentCloseAndResetZeroPositionAreRaceFree) {
+TEST(DriverCanMitConcurrency, ConcurrentCloseAndResetZeroPositionAreRaceFree) {
 #if !defined(__linux__)
     GTEST_SKIP() << "socket-backed concurrency assertion currently runs on Linux";
 #else
     CommandLineArgs cla{};
-    SocketBackedDriverArx driver(nullptr, cla);
+    SocketBackedDriverCanMit driver(nullptr, cla);
 
     constexpr size_t kRoundCount = 32;
     constexpr size_t kResetterCount = 16;
@@ -835,16 +986,16 @@ TEST(DriverArxConcurrency, ConcurrentCloseAndResetZeroPositionAreRaceFree) {
 #endif
 }
 
-TEST(DriverArxConcurrency, ConcurrentCloseAndEnableAreRaceFree) {
+TEST(DriverCanMitConcurrency, ConcurrentCloseAndEnableAreRaceFree) {
 #if !defined(__linux__)
     GTEST_SKIP() << "socket-backed concurrency assertion currently runs on Linux";
 #else
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    SocketBackedDriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    SocketBackedDriverCanMit driver(&device, cla);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1, ServoType::ENCOS_A4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1, ServoType::ENCOS_A4310);
     Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
 
     constexpr size_t kRoundCount = 32;
@@ -901,7 +1052,7 @@ TEST(DriverArxConcurrency, ConcurrentCloseAndEnableAreRaceFree) {
 #endif
 }
 
-TEST(DriverArxConcurrency, ConcurrentDmEnablesDoNotInterleaveHandshakes) {
+TEST(DriverCanMitConcurrency, ConcurrentDmEnablesDoNotInterleaveHandshakes) {
 #if !defined(__linux__)
     GTEST_SKIP() << "socket-backed concurrency assertion currently runs on Linux";
 #else
@@ -909,7 +1060,7 @@ TEST(DriverArxConcurrency, ConcurrentDmEnablesDoNotInterleaveHandshakes) {
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets), 0);
 
     CommandLineArgs cla{};
-    ConcurrentEnableProbeDriverArx driver(nullptr, cla);
+    ConcurrentEnableProbeDriverCanMit driver(nullptr, cla);
     driver.adopt_socket(sockets[0]);
 
     std::atomic<int> ready{0};
@@ -943,7 +1094,7 @@ TEST(DriverArxConcurrency, ConcurrentDmEnablesDoNotInterleaveHandshakes) {
 #endif
 }
 
-TEST(DriverArxConcurrency, SendCommandDoesNotInterleaveEnableHandshake) {
+TEST(DriverCanMitConcurrency, SendCommandDoesNotInterleaveEnableHandshake) {
 #if !defined(__linux__)
     GTEST_SKIP() << "socket-backed concurrency assertion currently runs on Linux";
 #else
@@ -951,12 +1102,12 @@ TEST(DriverArxConcurrency, SendCommandDoesNotInterleaveEnableHandshake) {
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets), 0);
 
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    EnableTransactionProbeDriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    EnableTransactionProbeDriverCanMit driver(&device, cla);
     driver.adopt_socket(sockets[0]);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 2, ServoType::DM_4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 2, ServoType::DM_4310);
     Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
 
     ReturnCode enable_result = ReturnCode::FAIL;
@@ -978,7 +1129,7 @@ TEST(DriverArxConcurrency, SendCommandDoesNotInterleaveEnableHandshake) {
 #endif
 }
 
-TEST(DriverArxConcurrency, ResetDoesNotInterleaveEnableHandshake) {
+TEST(DriverCanMitConcurrency, ResetDoesNotInterleaveEnableHandshake) {
 #if !defined(__linux__)
     GTEST_SKIP() << "socket-backed concurrency assertion currently runs on Linux";
 #else
@@ -986,7 +1137,7 @@ TEST(DriverArxConcurrency, ResetDoesNotInterleaveEnableHandshake) {
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets), 0);
 
     CommandLineArgs cla{};
-    EnableTransactionProbeDriverArx driver(nullptr, cla);
+    EnableTransactionProbeDriverCanMit driver(nullptr, cla);
     driver.adopt_socket(sockets[0]);
 
     ReturnCode enable_result = ReturnCode::FAIL;
@@ -1010,14 +1161,14 @@ TEST(DriverArxConcurrency, ResetDoesNotInterleaveEnableHandshake) {
 
 TEST(DriverRegistryLifetime, DestroyedServosAreUnregistered) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    FailingSendDriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    FailingSendDriverCanMit driver(&device, cla);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
     constexpr int kServoId = 13;
 
     {
-        DriverArxTestServoDm servo(&device, &driver, &param, kServoId, ServoType::DM_4310);
+        DriverCanMitTestServoDm servo(&device, &driver, &param, kServoId, ServoType::DM_4310);
         Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
         ASSERT_EQ(Driver::find_servo(kServoId), &servo);
         ASSERT_EQ(Driver::find_data_index(kServoId), servo.data_index_);
@@ -1033,14 +1184,14 @@ TEST(DriverRegistryLifetime, DestroyedServosAreUnregistered) {
     }
 }
 
-TEST(DriverArxTransport, SendCommandRejectsInvalidCanFrameBeforeWrite) {
+TEST(DriverCanMitTransport, SendCommandRejectsInvalidCanFrameBeforeWrite) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    FailingSendDriverArx driver(&device, cla);
+    DriverCanMitTestDevice device(cla);
+    FailingSendDriverCanMit driver(&device, cla);
     driver.adopt_socket(42);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 15, ServoType::DM_4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 15, ServoType::DM_4310);
     Driver::register_servo_data_index(servo.id_, -1, nullptr);
 
     EXPECT_EQ(driver.send_command(&servo, 1.0f, 0.1f, 0.5f, 0.0f, 0.0f), ReturnCode::INVALID_PARAM);
@@ -1049,14 +1200,14 @@ TEST(DriverArxTransport, SendCommandRejectsInvalidCanFrameBeforeWrite) {
     driver.abandon_socket();
 }
 
-TEST(DriverArxTransport, EncosEnablePropagatesSetupSendFailure) {
+TEST(DriverCanMitTransport, EncosEnablePropagatesSetupSendFailure) {
     CommandLineArgs cla{};
-    DriverArxTestDevice device(cla);
-    SetupSendFailingDriverArx driver(&device, cla, 1);
+    DriverCanMitTestDevice device(cla);
+    SetupSendFailingDriverCanMit driver(&device, cla, 1);
     driver.adopt_socket(42);
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -30.0f, 30.0f, -10.0f, 10.0f,
                        0.2f, 0.3f, 0.1f};
-    DriverArxTestServoDm servo(&device, &driver, &param, 1, ServoType::ENCOS_A4310);
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1, ServoType::ENCOS_A4310);
     Driver::register_servo_data_index(servo.id_, servo.data_index_, &servo);
 
     EXPECT_EQ(driver.enable(servo.id_, static_cast<int>(ServoType::ENCOS_A4310)), ReturnCode::BUSY);
@@ -1066,9 +1217,9 @@ TEST(DriverArxTransport, EncosEnablePropagatesSetupSendFailure) {
     driver.abandon_socket();
 }
 
-TEST(DriverArxTransport, EncosEnableRejectsInvalidSetupFrameBeforeWrite) {
+TEST(DriverCanMitTransport, EncosEnableRejectsInvalidSetupFrameBeforeWrite) {
     CommandLineArgs cla{};
-    ZeroDescriptorDriverArx driver(nullptr, cla);
+    ZeroDescriptorDriverCanMit driver(nullptr, cla);
     driver.adopt_socket(42);
     Driver::register_servo_data_index(31, -1, nullptr);
 
@@ -1078,12 +1229,12 @@ TEST(DriverArxTransport, EncosEnableRejectsInvalidSetupFrameBeforeWrite) {
     driver.abandon_socket();
 }
 
-TEST(DriverArxTransport, DmEnableStopsAfterFailedSetupWrite) {
+TEST(DriverCanMitTransport, DmEnableStopsAfterFailedSetupWrite) {
     int sockets[2];
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets), 0);
 
     CommandLineArgs cla{};
-    SetupSendFailingDriverArx driver(nullptr, cla, 1);
+    SetupSendFailingDriverCanMit driver(nullptr, cla, 1);
     driver.adopt_socket(sockets[0]);
 
     EXPECT_EQ(driver.enable(1, static_cast<int>(ServoType::DM_4310), false), ReturnCode::BUSY);
@@ -1094,12 +1245,12 @@ TEST(DriverArxTransport, DmEnableStopsAfterFailedSetupWrite) {
     close(sockets[1]);
 }
 
-TEST(DriverArxLifecycle, FailedEnableRestartsActiveReception) {
+TEST(DriverCanMitLifecycle, FailedEnableRestartsActiveReception) {
     int sockets[2];
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets), 0);
 
     CommandLineArgs cla{};
-    EnableSendFailingDriverArx driver(nullptr, cla);
+    EnableSendFailingDriverCanMit driver(nullptr, cla);
     driver.adopt_socket(sockets[0]);
 
     std::atomic<bool> callback_entered{false};
@@ -1122,6 +1273,75 @@ TEST(DriverArxLifecycle, FailedEnableRestartsActiveReception) {
 
     EXPECT_EQ(driver.close(), ReturnCode::SUCCESS);
     close(sockets[1]);
+}
+
+TEST(ServoAbsPosition, ParsesOptionalAbsPositionFieldFromModelConfig) {
+    CommandLineArgs cla{};
+    DriverCanMitTestDevice device(cla);
+    DriverCanMit driver(&device, cla);
+    ServoDmParam param{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    DeviceConfig config;
+
+    // Field present (E_ARX_ENC gripper): sign-agnostic reads are enabled.
+    {
+        DriverCanMitTestServoDm servo(&device, &driver, &param, 1543, ServoType::ARX_ENCODER);
+        const json servo_config = {{"servo_id", 1543},
+                                   {"data_index", 6},
+                                   {"servo_model", config.val_servo_model_arx_encoder},
+                                   {"abs_position", true}};
+        ASSERT_EQ(servo.init_config_model(servo_config, &config), ReturnCode::SUCCESS);
+        EXPECT_TRUE(servo.abs_position_);
+        Driver::register_servo_data_index(servo.id_, -1, nullptr);
+    }
+
+    // Field absent (arm joints): sign-preserving reads stay the default.
+    {
+        DriverCanMitTestServoDm servo(&device, &driver, &param, 1537, ServoType::ARX_ENCODER);
+        const json servo_config = {
+            {"servo_id", 1537}, {"data_index", 0}, {"servo_model", config.val_servo_model_arx_encoder}};
+        ASSERT_EQ(servo.init_config_model(servo_config, &config), ReturnCode::SUCCESS);
+        EXPECT_FALSE(servo.abs_position_);
+        Driver::register_servo_data_index(servo.id_, -1, nullptr);
+    }
+}
+
+TEST(ServoAbsPosition, RejectsNonBooleanAbsPositionValues) {
+    CommandLineArgs cla{};
+    DriverCanMitTestDevice device(cla);
+    DriverCanMit driver(&device, cla);
+    ServoDmParam param{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    DeviceConfig config;
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1543, ServoType::ARX_ENCODER);
+    const json servo_config = {{"servo_id", 1543},
+                               {"data_index", 6},
+                               {"servo_model", config.val_servo_model_arx_encoder},
+                               {"abs_position", "yes"}};
+    EXPECT_NE(servo.init_config_model(servo_config, &config), ReturnCode::SUCCESS);
+    Driver::register_servo_data_index(servo.id_, -1, nullptr);
+}
+
+TEST(ServoAbsPosition, ReportsSignAgnosticRelativePositionsWhenEnabled) {
+    CommandLineArgs cla{};
+    DriverCanMitTestDevice device(cla);
+    DriverCanMit driver(&device, cla);
+    ServoDmParam param{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    DriverCanMitTestServoDm servo(&device, &driver, &param, 1543, ServoType::ARX_ENCODER);
+    servo.zero_pos_abs_ = 0.0f;
+    servo.dir_invert_ = 1;
+
+    // A right-hand ARX_ENC gripper reads negative angles; abs_position folds them positive
+    // so left/right hardware report the same opening (vendor reference applies abs()).
+    servo.abs_position_ = true;
+    servo.curr_pos_abs_ = -0.5f;
+    EXPECT_NEAR(servo.get_pos_rad_relative(), 0.5f, 1e-6f);
+    EXPECT_NEAR(servo.get_pos_rad_relative(-0.5f), 0.5f, 1e-6f);
+    servo.curr_pos_abs_ = 0.5f;
+    EXPECT_NEAR(servo.get_pos_rad_relative(), 0.5f, 1e-6f);
+
+    // Default keeps the sign for regular joints.
+    servo.abs_position_ = false;
+    servo.curr_pos_abs_ = -0.5f;
+    EXPECT_NEAR(servo.get_pos_rad_relative(), -0.5f, 1e-6f);
 }
 
 }  // namespace

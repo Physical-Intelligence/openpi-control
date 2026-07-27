@@ -1,8 +1,8 @@
 {
- "config_version": "1.1.1",
+ "config_version": "1.3.1",
  "device_model": "E_Yam_Handle",
  "device_type": "effector",
- "effector_type": "arx",
+ "effector_type": "can",
  "topic_type": "ROS",
  "driver_type": "CAN",
  "algo_type": "Algo",

@@ -463,7 +463,7 @@ ReturnCode DeviceEffector::init(const CommandLineArgs& cla, int argc,
             "control mode");
     }
 
-    // Torque-mode spring offset (rad): monopi ControlFollowGripper "offset",
+    // Torque-mode spring offset (rad),
     // subtracted from the position error. Installation-specific zero trim;
     // optional, default 0 (prefer adjusting the servo zero instead).
     return_code = p_config_individual_->get_field_value(

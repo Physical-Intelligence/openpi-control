@@ -311,6 +311,6 @@ class DeviceEffector : public Device {
     DeviceArm* p_arm_ = nullptr;                  ///< Pointer to the attached arm device.
 
     float distance_to_torque_ = 0.0f;             ///< Distance-to-torque conversion factor (Nm/rad).
-    float grip_spring_offset_ = 0.0f;             ///< Torque-mode spring offset (rad), subtracted from the position error (monopi ControlFollowGripper "offset"; a per-installation zero trim -- prefer adjusting the servo zero).
+    float grip_spring_offset_ = 0.0f;             ///< Torque-mode spring offset (rad), subtracted from the position error; a per-installation zero trim -- prefer adjusting the servo zero.
     bool open_at_min_ = false;              ///< Open side of the effector: true if open at min position, false if open at max position.
 };

@@ -5,21 +5,21 @@
 
 #pragma once
 
-#include "pi_driver_arx.hpp"
+#include "pi_driver_can_mit.hpp"
 
 /*!
  * @brief Read-only CAN driver for an ARX encoder leader arm.
  *
  * Each joint carries a passive encoder that broadcasts a fixed 2-byte
  * mechanical angle at 200 Hz on its own CAN id (no servo, no torque, no
- * enable handshake). This driver inherits ``DriverArx`` to reuse its
+ * enable handshake). This driver inherits ``DriverCanMit`` to reuse its
  * ``open``/``close`` reception loop, the ``ReceivedServoData`` cache,
  * ``read_hardware_values`` (angle -> ``curr_pos_abs_``) and the staleness
  * scan in ``group_read_hardware_values``. Only the per-frame parse differs
  * (different CAN id range and payload), and all actuation entry points are
  * no-ops so nothing is ever written to the bus.
  */
-class DriverArxEncoder : public DriverArx {
+class DriverArxEncoder : public DriverCanMit {
    public:
     /*!
      * @brief Constructor.

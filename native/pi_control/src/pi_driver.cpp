@@ -6,7 +6,7 @@
 #include "pi_driver.hpp"
 
 #include "pi_device_config.hpp"
-#include "pi_driver_arx.hpp"
+#include "pi_driver_can_mit.hpp"
 #include "pi_driver_arx_encoder.hpp"
 #include "pi_driver_ft.hpp"
 #include "pi_driver_trossen.hpp"
@@ -32,9 +32,9 @@ std::shared_ptr<Driver> Driver::new_driver(Device* p_device, const DeviceConfig*
 
     std::shared_ptr<Driver> p_driver = nullptr;
     if (driver_type == p_config->val_driver_type_can) {
-        auto p_driver_arx = std::make_shared<DriverArx>(p_device, cla);
-        p_driver = p_driver_arx;
-        PI_INFO("Driver", InfoLevel::HELPFUL_1, "Created CAN 2.0 driver (DriverArx)");
+        auto p_driver_can_mit = std::make_shared<DriverCanMit>(p_device, cla);
+        p_driver = p_driver_can_mit;
+        PI_INFO("Driver", InfoLevel::HELPFUL_1, "Created CAN 2.0 driver (DriverCanMit)");
 
     } else if (driver_type == p_config->val_driver_type_can_encoder) {
         auto p_driver_encoder = std::make_shared<DriverArxEncoder>(p_device, cla);

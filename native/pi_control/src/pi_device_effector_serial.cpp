@@ -1,19 +1,19 @@
 /*!
- * @file pi_device_effector_nello.cpp
- * @brief Implementation of the DeviceEffectorNello class for Nello effector device control.
+ * @file pi_device_effector_serial.cpp
+ * @brief Implementation of the DeviceEffectorSerial class for serial bus-servo effector device control.
  */
 
  #include <unistd.h>
 
-#include "pi_device_effector_nello.hpp"
+#include "pi_device_effector_serial.hpp"
 #include "pi_joint.hpp"
 #include "pi_servo.hpp"
 
-DeviceEffectorNello::DeviceEffectorNello(const CommandLineArgs& cla) : DeviceEffector(cla) {}
+DeviceEffectorSerial::DeviceEffectorSerial(const CommandLineArgs& cla) : DeviceEffector(cla) {}
 
-DeviceEffectorNello::~DeviceEffectorNello() {}
+DeviceEffectorSerial::~DeviceEffectorSerial() {}
 
-ReturnCode DeviceEffectorNello::set_control_mode(Role target_role, ControlModeIntent intent) {
+ReturnCode DeviceEffectorSerial::set_control_mode(Role target_role, ControlModeIntent intent) {
     ReturnCode rc = ReturnCode::SUCCESS;
 
     // READY_MOVE_OVERRIDE forces a safe position-based behavior regardless of configured effector control type.
@@ -44,7 +44,7 @@ ReturnCode DeviceEffectorNello::set_control_mode(Role target_role, ControlModeIn
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DeviceEffectorNello::init(const CommandLineArgs& cla, int argc, char** argv, std::shared_ptr<Topic> p_topic,
+ReturnCode DeviceEffectorSerial::init(const CommandLineArgs& cla, int argc, char** argv, std::shared_ptr<Topic> p_topic,
                                       std::shared_ptr<Driver> p_driver) {
     ReturnCode return_code = DeviceEffector::init(cla, argc, argv, p_topic, p_driver);
     if (return_code != ReturnCode::SUCCESS) {
@@ -69,11 +69,11 @@ ReturnCode DeviceEffectorNello::init(const CommandLineArgs& cla, int argc, char*
     return return_code;
 }
 
-ReturnCode DeviceEffectorNello::move_to_ready_position() {
+ReturnCode DeviceEffectorSerial::move_to_ready_position() {
     ReturnCode return_code = ReturnCode::SUCCESS;
 
     if (is_read_only() == true) {
-        // Read-only Nello effector (e.g. T6_2.0A leader-side or T6_2.0A as a follower
+        // Read-only serial effector (e.g. T6_2.0A leader-side or T6_2.0A as a follower
         // gripper that reports position but isn't actuated): mirror the base-class
         // short-circuit so the device's is_ready_ flag actually flips. Without this,
         // pi_control_node never publishes DEVICE_INFO_READY_NOW and the UI hangs in
@@ -109,7 +109,7 @@ ReturnCode DeviceEffectorNello::move_to_ready_position() {
 
     return_code = DeviceEffector::move_to_ready_position();
     if (return_code != ReturnCode::SUCCESS) {
-        PI_ERROR("Failed to move Nello effector to ready position");
+        PI_ERROR("Failed to move serial effector to ready position");
         return return_code;
     }
 
@@ -123,7 +123,7 @@ ReturnCode DeviceEffectorNello::move_to_ready_position() {
     return return_code;
 }
 
-ReturnCode DeviceEffectorNello::move_joint_with_torque(Joint* p_joint, float target_pos) {
+ReturnCode DeviceEffectorSerial::move_joint_with_torque(Joint* p_joint, float target_pos) {
     ReturnCode return_code = ReturnCode::SUCCESS;
 
     if (is_read_only() == true) {
@@ -152,7 +152,7 @@ ReturnCode DeviceEffectorNello::move_joint_with_torque(Joint* p_joint, float tar
     }
 
     PI_INFO("DeviceEffector", InfoLevel::FREQUENT_3,
-            "Nello effector torque control: target_pos_rel=%.3f, clipped_target_pos=%.3f, curr_pos_rel=%.3f, "
+            "Serial effector torque control: target_pos_rel=%.3f, clipped_target_pos=%.3f, curr_pos_rel=%.3f, "
             "clipped_curr_pos=%.3f, distance=%.3f, torq_to_apply=%.3f, distance_to_torque_=%.3f",
             target_pos, clipped_target_pos, p_joint->get_pos_rad_relative(), clipped_curr_pos, distance, torq_to_apply,
             distance_to_torque_);

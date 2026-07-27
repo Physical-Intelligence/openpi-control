@@ -5,7 +5,7 @@
 
 #include "pi_device_effector_controller.hpp"
 
-DeviceEffectorController::DeviceEffectorController(const CommandLineArgs& cla) : DeviceEffectorArx(cla) {}
+DeviceEffectorController::DeviceEffectorController(const CommandLineArgs& cla) : DeviceEffectorCan(cla) {}
 
 DeviceEffectorController::~DeviceEffectorController() {}
 
