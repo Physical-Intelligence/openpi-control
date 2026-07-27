@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 #include <unordered_set>
 
 #include "pi_device_arm.hpp"
@@ -45,7 +46,7 @@ ReturnCode DeviceArm::set_control_mode(Role target_role, ControlModeIntent inten
     //   safely from the current pose.
     // - NORMAL_OPERATION: follow target_role (leader vs follower).
     //
-    // The ARX device subclass may override hardware-specific behavior.
+    // The CAN device subclass may override hardware-specific behavior.
     const bool use_follower_like = (intent == ControlModeIntent::READY_MOVE_OVERRIDE) || (target_role == Role::FOLLOWER);
     ReturnCode rc = ReturnCode::SUCCESS;
 
@@ -75,9 +76,122 @@ ReturnCode DeviceArm::set_control_mode(Role target_role, ControlModeIntent inten
 
     if (use_follower_like) {
         reset_slew_targets_to_current();
+        // Any (re-)entry into position control ends a calibration gravity
+        // float: move-to-ready and emergency recovery must never fight the
+        // float branch of operate_as_follower().
+        gravity_float_active_ = false;
     }
 
     return ReturnCode::SUCCESS;
+}
+
+ReturnCode DeviceArm::set_runtime_gravity_float(bool enabled, float abort_drift_rad) {
+    if (role_ != Role::FOLLOWER) {
+        return ReturnCode::NOT_SUPPORTED;
+    }
+    if (enabled == gravity_float_active_) {
+        return ReturnCode::SUCCESS;
+    }
+    if (enabled) {
+        if (!p_algo_) {
+            PI_ERROR("%s_%s: gravity float needs a gravity-capable algo (URDF-backed); none is initialized",
+                     model_.c_str(), id_.c_str());
+            return ReturnCode::NOT_SUPPORTED;
+        }
+        if (!std::isfinite(abort_drift_rad) || abort_drift_rad <= 0.0f) {
+            PI_ERROR("%s_%s: gravity float abort threshold must be a positive radian value, got %.3f",
+                     model_.c_str(), id_.c_str(), abort_drift_rad);
+            return ReturnCode::INVALID_PARAM;
+        }
+        // The runaway baseline: the loop watches |pos - baseline| per joint and
+        // re-engages HOLD itself. The client is too slow for this judgment
+        // (ZMQ round trip), so the stop must live here.
+        gravity_float_baseline_.clear();
+        for (auto& p_joint : joints_) {
+            gravity_float_baseline_.push_back(p_joint->get_pos_rad_relative());
+        }
+        gravity_float_abort_rad_ = abort_drift_rad;
+        prof_time_t current_time = Profile::get_time_now();
+        for (auto& p_joint : joints_) {
+            ReturnCode return_code = p_joint->change_control_mode_for_leader(current_time);
+            if (return_code != ReturnCode::SUCCESS) return return_code;
+        }
+        gravity_float_active_ = true;
+        PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0,
+                "%s_%s: entering calibration gravity float (gravity feed-forward only; abort drift %.3f rad; "
+                "HOLD re-engages position control)",
+                model_.c_str(), id_.c_str(), abort_drift_rad);
+        return ReturnCode::SUCCESS;
+    }
+    for (auto& p_joint : joints_) {
+        ReturnCode return_code = p_joint->change_control_mode_for_follower();
+        if (return_code != ReturnCode::SUCCESS) return return_code;
+    }
+    reset_slew_targets_to_current();
+    gravity_float_active_ = false;
+    PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0,
+            "%s_%s: leaving calibration gravity float (position control re-engaged at the current pose)",
+            model_.c_str(), id_.c_str());
+    return ReturnCode::SUCCESS;
+}
+
+ReturnCode DeviceArm::set_runtime_torq_rescale(const std::vector<float>& values) {
+    if ((int)values.size() != dof_) {
+        PI_ERROR("%s_%s: runtime torq_rescale update has %d values but the arm has %d joints", model_.c_str(),
+                 id_.c_str(), (int)values.size(), dof_);
+        return ReturnCode::INVALID_PARAM;
+    }
+    for (float value : values) {
+        if (!std::isfinite(value) || value < 0.0f) {
+            PI_ERROR("%s_%s: runtime torq_rescale values must be finite and nonnegative, got %.3f",
+                     model_.c_str(), id_.c_str(), value);
+            return ReturnCode::INVALID_PARAM;
+        }
+    }
+    std::ostringstream summary;
+    for (size_t i = 0; i < joints_.size(); i++) {
+        joints_[i]->torq_rescale_ = values[i];
+        summary << (i > 0 ? ", " : "") << values[i];
+    }
+    PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0, "%s_%s: torq_rescale updated at runtime: [%s]", model_.c_str(),
+            id_.c_str(), summary.str().c_str());
+    return ReturnCode::SUCCESS;
+}
+
+ReturnCode DeviceArm::publish_next_servo_param() {
+    if (joints_.empty()) {
+        return ReturnCode::SUCCESS;
+    }
+    const int index = servo_param_publish_index_ % (int)joints_.size();
+    servo_param_publish_index_ = (index + 1) % (int)joints_.size();
+    Servo::MitCodecReport report;
+    if (!joints_[index]->get_mit_codec_report(report)) {
+        return ReturnCode::SUCCESS;
+    }
+    // The gravity feed-forward flag is device-level; it rides every joint's
+    // report so one message is enough to know the applied state. The wire
+    // format caps a device-info message at 10 floats, so the position gains
+    // travel in the int slots as milli-units.
+    std::vector<int> ints = {index,
+                             report.reported_spd_valid ? 1 : 0,
+                             report.reported_tor_valid ? 1 : 0,
+                             follower_gravity_compensation_ ? 1 : 0,
+                             (int)std::lround(report.pos_kp * 1000.0f),
+                             (int)std::lround(report.pos_kd * 1000.0f)};
+    std::vector<float> floats = {report.codec_vel_min,    report.codec_vel_max,    report.codec_tor_min,
+                                 report.codec_tor_max,    report.reported_spd_min, report.reported_spd_max,
+                                 report.reported_tor_min, report.reported_tor_max, report.torq_rescale};
+    return publish_device_info(DEVICE_INFO_SERVO_PARAM, &floats, &ints);
+}
+
+ReturnCode DeviceArm::runtime_hold() {
+    if (gravity_float_active_) {
+        ReturnCode return_code = set_runtime_gravity_float(false, 0.0f);
+        if (return_code != ReturnCode::SUCCESS) {
+            return return_code;
+        }
+    }
+    return Device::runtime_hold();
 }
 
 ReturnCode DeviceArm::set_runtime_force_feedback(bool enabled, float gain) {
@@ -537,6 +651,24 @@ ReturnCode DeviceArm::init(const CommandLineArgs& cla, int argc, char** argv, st
                 model_.c_str(), id_.c_str());
     }
 
+    // Follower gravity feed-forward: the individual config JSON declares the default and the
+    // --follower_gravity_compensation override (fed by devices.toml) takes precedence.
+    bool follower_gravity_requested;
+    return_code = p_config_individual_->get_field_value(p_config_individual_->values_,
+                                                        p_config_individual_->fn_follower_gravity_compensation,
+                                                        follower_gravity_requested);
+    if (return_code != ReturnCode::SUCCESS) {
+        PI_ERROR("%s_%s: follower_gravity_compensation is not defined in the individual configuration "
+                 "(required since config_version 1.3.0)",
+                 model_.c_str(), id_.c_str());
+        return return_code;
+    }
+    const char* follower_gravity_source = "individual config default";
+    if (cla_.follower_gravity_compensation_override != OPT_FOLLOWER_GRAVITY_COMPENSATION_DEFAULT) {
+        follower_gravity_requested = (cla_.follower_gravity_compensation_override == "true");
+        follower_gravity_source = "devices.toml override (beats the individual config)";
+    }
+
     return_code = enable_spring_effect(spring_effect);
     if (return_code != ReturnCode::SUCCESS) {
         PI_ERROR("Failed to enable spring effect for %s_%s", model_.c_str(), id_.c_str());
@@ -562,6 +694,37 @@ ReturnCode DeviceArm::init(const CommandLineArgs& cla, int argc, char** argv, st
 
     dof_ = (int)joints_.size();
     PI_INFO("DeviceArm", InfoLevel::HELPFUL_1, "DeviceArm %s_%s: DOF=%d", model_.c_str(), id_.c_str(), dof_);
+
+    // Highest-precedence torq_rescale override (devices.toml [arms] torq_rescale
+    // -> --torq_rescale): applied after the model and individual configs so a
+    // per-unit gravity-delivery calibration needs no JSON edit or wheel rebuild.
+    if (!cla_.torq_rescale_override.empty()) {
+        if ((int)cla_.torq_rescale_override.size() != dof_) {
+            PI_ERROR("%s_%s: --%s has %d values but the arm has %d joints", model_.c_str(), id_.c_str(),
+                     OPT_TORQ_RESCALE, (int)cla_.torq_rescale_override.size(), dof_);
+            return ReturnCode::INVALID_PARAM;
+        }
+        for (size_t i = 0; i < joints_.size(); i++) {
+            joints_[i]->torq_rescale_ = cla_.torq_rescale_override[i];
+        }
+        PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0,
+                "%s_%s: torq_rescale overridden by devices.toml [arms] torq_rescale (beats model and "
+                "individual configs)",
+                model_.c_str(), id_.c_str());
+    }
+
+    // One-line torque-delivery summary so an A/B run comparison can be
+    // reconstructed from the logs alone: effective wire torque per joint is
+    // torq_rescale x MIT codec full scale (the codec ranges are logged by each
+    // servo at connect), clipped to torq_max.
+    std::ostringstream rescale_summary;
+    std::ostringstream torq_max_summary;
+    for (size_t i = 0; i < joints_.size(); i++) {
+        rescale_summary << (i > 0 ? ", " : "") << joints_[i]->torq_rescale_;
+        torq_max_summary << (i > 0 ? ", " : "") << joints_[i]->torq_max_;
+    }
+    PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0, "%s_%s: torq_rescale=[%s] torq_max=[%s]", model_.c_str(),
+            id_.c_str(), rescale_summary.str().c_str(), torq_max_summary.str().c_str());
 
     for (int i = 0; i < dof_; i++) {
         tele_pos_.push_back(0);
@@ -671,6 +834,60 @@ ReturnCode DeviceArm::init(const CommandLineArgs& cla, int argc, char** argv, st
                 model_.c_str(), id_.c_str());
     }
 
+    // Follower gravity feed-forward: model gravity torque is
+    // sent with every position command so the position gains only correct
+    // tracking error instead of holding the arm against gravity. Independent
+    // of the planning type. Fail fast on arms that cannot honor it -- silently
+    // continuing would run un-compensated gains the operator did not ask for.
+    std::string arm_type;
+    return_code = p_config_model_->get_field_value(p_config_model_->values_, p_config_model_->fn_arm_type, arm_type);
+    if (return_code != ReturnCode::SUCCESS) {
+        PI_ERROR("%s_%s: arm type is not defined in the model configuration", model_.c_str(), id_.c_str());
+        return return_code;
+    }
+    const bool is_controller_arm = (arm_type == p_config_model_->val_arm_type_controller);
+
+    if (role_ == Role::FOLLOWER && follower_gravity_requested) {
+        if (is_controller_arm) {
+            // Whole-arm controllers (Trossen) compute gravity/friction compensation inside the
+            // vendor controller in every active mode, so the request is already satisfied without
+            // streaming torque from this node.
+            PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0,
+                    "%s_%s: follower gravity compensation ON via the vendor controller "
+                    "(built-in, always active; source: %s)",
+                    model_.c_str(), id_.c_str(), follower_gravity_source);
+        } else if (!supports_torque_feed_forward()) {
+            PI_ERROR("%s_%s: follower gravity compensation was requested but this arm type cannot "
+                     "take a torque feed-forward (serial bus servos are position-only). Remove the "
+                     "option for this arm.",
+                     model_.c_str(), id_.c_str());
+            return ReturnCode::NOT_SUPPORTED;
+        } else if (!p_algo_ || !p_algo_->has_gravity_model()) {
+            PI_ERROR("%s_%s: follower gravity compensation was requested but the arm has no dynamics "
+                     "model (a URDF-backed algo such as Pinocchio is required).",
+                     model_.c_str(), id_.c_str());
+            return ReturnCode::NOT_INITIALIZED;
+        } else {
+            enabled_gravity_compensation_ = true;
+            follower_gravity_compensation_ = true;
+            PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0,
+                    "%s_%s: follower gravity compensation ON (source: %s)",
+                    model_.c_str(), id_.c_str(), follower_gravity_source);
+        }
+    } else if (role_ == Role::FOLLOWER && is_controller_arm) {
+        // The vendor controller has no API to disable its built-in compensation, so an explicit
+        // "off" cannot be honored on controller arms. Warn instead of failing: position tracking
+        // still behaves as it always has on this hardware.
+        PI_WARN("%s_%s: follower gravity compensation is requested off (source: %s), but the vendor "
+                "controller's built-in compensation cannot be disabled and stays active",
+                model_.c_str(), id_.c_str(), follower_gravity_source);
+    } else if (role_ == Role::FOLLOWER) {
+        // Explicit OFF trace so an A/B comparison can be reconstructed from the logs alone.
+        PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0,
+                "%s_%s: follower gravity compensation OFF (source: %s)",
+                model_.c_str(), id_.c_str(), follower_gravity_source);
+    }
+
     return ReturnCode::SUCCESS;
 }
 
@@ -701,7 +918,7 @@ ReturnCode DeviceArm::verify_servos_operational() {
         any_probe_sent = true;
     }
     if (any_probe_sent) {
-        // Flush the probe to the bus. CAN drivers (ARX) transmit inside move() and this
+        // Flush the probe to the bus. CAN drivers (DriverCanMit) transmit inside move() and this
         // is a no-op there, but the call keeps the sequence correct for any queued
         // group-write driver added later.
         if (p_driver_ != nullptr) {
@@ -1572,15 +1789,69 @@ ReturnCode DeviceArm::operate_as_follower() {
         return ReturnCode::NOT_SUPPORTED;
     }
 
-    if (!p_algo_ && planning_type_ == TrajectoryPlanningType::SLEW_POS_GRAVITY) {
+    if (!p_algo_ && follower_gravity_compensation_) {
         PI_ERROR("Algorithm handler is not initialized in operate_as_follower()");
         return ReturnCode::NOT_INITIALIZED;
+    }
+
+    if (gravity_float_active_) {
+        // Calibration gravity float (gravity_tune / arm_check on a follower
+        // node): the joints are in leader control mode, so the arm rests on the
+        // model gravity feed-forward alone -- the exact float the leader path
+        // applies when teleop is disengaged. Live position commands are ignored
+        // until HOLD (or a move-to-ready) re-engages position control.
+        //
+        // In-loop runaway watchdog: judged here (at the control rate), NOT by
+        // the client -- a ZMQ round trip is far too slow, and by the time a
+        // Python monitor reacts the arm has fallen well past the threshold.
+        int i = 0;
+        for (auto& p_joint : joints_) {
+            const float drift = p_joint->get_pos_rad_relative() - gravity_float_baseline_[i];
+            if (std::fabs(drift) > gravity_float_abort_rad_) {
+                PI_INFO("DeviceArm", InfoLevel::ESSENTIAL_0,
+                        "%s_%s: gravity float runaway (joint %d drifted %.3f rad > %.3f) -- re-engaging HOLD "
+                        "at the current pose",
+                        model_.c_str(), id_.c_str(), p_joint->id_, drift, gravity_float_abort_rad_);
+                return_code = set_runtime_gravity_float(false, 0.0f);
+                if (return_code != ReturnCode::SUCCESS) {
+                    return return_code;
+                }
+                // Rebase the buffered targets too so no stale pre-float command
+                // yanks the arm after the re-engage.
+                clear_command_buffers_for_move_to_ready();
+                return ReturnCode::SUCCESS;
+            }
+            i++;
+        }
+
+        std::fill(target_tor_.begin(), target_tor_.end(), 0.0f);
+        i = 0;
+        for (auto& p_joint : joints_) {
+            current_motor_positions_[i++] = p_joint->get_pos_rad_relative() * p_joint->get_dir_invert();
+        }
+        return_code = p_algo_->gravity_compensation(current_motor_positions_, target_tor_);
+        if (return_code != ReturnCode::SUCCESS) {
+            PI_ERROR("Gravity compensation algorithm execution failed for %s_%s", model_.c_str(), id_.c_str());
+            return return_code;
+        }
+        i = 0;
+        for (auto& p_joint : joints_) {
+            target_tor_[i] *= p_joint->gravity_comp_factor_;
+            return_code = p_joint->apply_torque(target_tor_[i]);
+            if (return_code != ReturnCode::SUCCESS) {
+                PI_ERROR("Failed to apply the gravity float torque to joint %d in %s_%s", p_joint->id_,
+                         model_.c_str(), id_.c_str());
+                return return_code;
+            }
+            i++;
+        }
+        return ReturnCode::SUCCESS;
     }
 
     // Reuse pre-allocated vector (reset to zero)
     std::fill(target_tor_.begin(), target_tor_.end(), 0.0f);
 
-    if (planning_type_ == TrajectoryPlanningType::SLEW_POS_GRAVITY) {
+    if (follower_gravity_compensation_) {
         // Reuse pre-allocated vector
         int i = 0;
         for (auto& p_joint : joints_) {
@@ -1598,18 +1869,16 @@ ReturnCode DeviceArm::operate_as_follower() {
         i = 0;
         for (auto& p_joint : joints_) {
             target_tor_[i] *= p_joint->gravity_comp_factor_;
-            if (planning_type_ == TrajectoryPlanningType::SLEW_POS_GRAVITY) {
-                target_tor_[i] -= p_joint->follow_viscous_damping_ * p_joint->get_vel_rad_sec();
-            }
+            target_tor_[i] -= p_joint->follow_viscous_damping_ * p_joint->get_vel_rad_sec();
             i++;
         }
     }
 
     // Synchronized follower slew: bound the tracking velocity by each joint's
-    // follow_vel_max for EVERY planning type, not just SLEW_POS_GRAVITY. Direct
-    // tracking (planning "None") used to hand the raw leader target to the PD
-    // loop, so a 50 Hz command staircase was traversed as stiff instantaneous
-    // steps and follow_vel_max was silently ignored. One shared scale keeps the
+    // follow_vel_max whether or not gravity feed-forward is active. Direct
+    // tracking used to hand the raw leader target to the PD loop, so a 50 Hz
+    // command staircase was traversed as stiff instantaneous steps and
+    // follow_vel_max was silently ignored. One shared scale keeps the
     // multi-joint motion synchronized (straight line in joint space).
     if (slew_goal_positions_.size() != joints_.size() || control_frequency_ <= 0) {
         PI_ERROR("Invalid synchronized slew state in operate_as_follower() for %s_%s", model_.c_str(),

@@ -188,7 +188,7 @@ ReturnCode Joint::init_config_model(const json& joint_config, const DeviceConfig
         PI_INFO("Joint", InfoLevel::HELPFUL_1, "Joint %d: safe_mode_derating=%.3f", id_, safe_mode_derating_);
     }
 
-    // Load spring invert flag (optional: config format 1.1.1 places it in the model
+    // Load spring invert flag (optional: config format 1.1.1+ places it in the model
     // configuration; the individual configuration may still override it)
     return_code = p_config->get_field_value(joint_config, p_config->fn_joint_spring_invert, spring_invert_);
     if (return_code == ReturnCode::SUCCESS) {
@@ -249,6 +249,26 @@ ReturnCode Joint::init_config_individual(const json& joint_config, const DeviceC
                  "overrides (vel_max=%.3f accel_max=%.3f follow_vel_max=%.3f)",
                  id_, vel_max_, accel_max_, follow_vel_max_);
         return ReturnCode::INVALID_PARAM;
+    }
+
+    // Optional gravity-delivery calibration override: torq_rescale is a
+    // per-unit value (motor batches differ in effective torque full scale, so
+    // the kp=0 float test calibrates each robot), and a site calibration JSON
+    // may replace the model default without a wheel rebuild.
+    float torq_rescale_individual = torq_rescale_;
+    if (p_config->get_field_value(joint_config, p_config->fn_joint_torq_rescale, torq_rescale_individual) ==
+        ReturnCode::SUCCESS) {
+        if (!std::isfinite(torq_rescale_individual) || torq_rescale_individual < 0.0f) {
+            PI_ERROR("Joint %d: torq_rescale override must be finite and nonnegative, but found %.3f", id_,
+                     torq_rescale_individual);
+            return ReturnCode::INVALID_PARAM;
+        }
+        if (torq_rescale_individual != torq_rescale_) {
+            PI_INFO("Joint", InfoLevel::ESSENTIAL_0,
+                    "Joint %d: torq_rescale overridden by individual config: %.3f -> %.3f", id_, torq_rescale_,
+                    torq_rescale_individual);
+        }
+        torq_rescale_ = torq_rescale_individual;
     }
 
     return ReturnCode::SUCCESS;

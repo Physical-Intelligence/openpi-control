@@ -298,6 +298,22 @@ class Joint {
     }
 
     /*!
+     * @brief MIT codec report of the reference servo (effective codec + motor-reported ranges).
+     * @return true when the reference servo has an MIT codec, false otherwise.
+     */
+    bool get_mit_codec_report(Servo::MitCodecReport& report) {
+        if (servos_.size() == 0 || reference_servo_index_ >= (int)servos_.size()) {
+            PI_ERROR("Servo is not initialized in get_mit_codec_report(): Joint%d", id_);
+            return false;
+        }
+        if (!servos_[reference_servo_index_]->get_mit_codec_report(report)) {
+            return false;
+        }
+        report.torq_rescale = torq_rescale_;
+        return true;
+    }
+
+    /*!
      * @brief Age of the hardware frame backing the reference servo's position.
      * @return Frame age in milliseconds, or -1 when unknown/untracked.
      */

@@ -234,6 +234,7 @@ int main(int argc, char** argv) {
         const int ready_announce_interval_loops =
             std::max(1, (int)cla.control_frequency / 10);  // ~0.1 sec
         int handshake_announce_counter = 0;
+        int servo_param_announce_counter = 0;
 
         while (g_terminate_signal_received == 0 && p_device->is_running()) {
             return_code = p_device->step();
@@ -300,6 +301,15 @@ int main(int argc, char** argv) {
 
             if ((handshake_announce_counter++ % std::max(1, cla.control_frequency / 2)) == 0) {
                 p_device->publish_device_info(DEVICE_INFO_PROTOCOL_HANDSHAKE, nullptr, &handshake_data);
+            }
+
+            // Servo parameters: one joint per publish on a faster cadence (10 Hz),
+            // round-robin. Pub/sub gives no replay, so the report repeats forever for
+            // late subscribers — and the status sockets run with a tiny HWM (2), so a
+            // per-joint burst would be dropped down to its tail (observed: the client
+            // received 1 of 6 joints when all were published in one tick).
+            if ((servo_param_announce_counter++ % std::max(1, cla.control_frequency / 10)) == 0) {
+                p_device->publish_next_servo_param();
             }
 
             const bool ready_now = p_device->is_ready();

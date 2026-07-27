@@ -36,6 +36,7 @@ from .types import (
     ArmState,
     EffectorState,
     InputState,
+    JointServoReport,
     JointState,
     PositionCommand,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "HardwareFaultError",
     "InputLayout",
     "InputState",
+    "JointServoReport",
     "JointState",
     "LeaderArm",
     "NativeProcessError",

@@ -31,6 +31,7 @@
 #define DEVICE_COMMAND_SET_FORCE_FEEDBACK_GAIN     32
 #define DEVICE_COMMAND_HOLD                        33
 #define DEVICE_COMMAND_HEARTBEAT                   34  ///< Client-liveness heartbeat; payload-free, arms the dead-client watchdog.
+#define DEVICE_COMMAND_SET_TORQ_RESCALE            35  ///< Runtime per-joint torq_rescale update (float params, one per arm joint).
 
 #define DEVICE_INFO_READY_NOW 1  ///< Device is ready; param_int[0] is the completed lifecycle request id, if any.
 #define DEVICE_INFO_EFFECTOR  10 ///< Device info code indicating that the device is an effector.
@@ -59,6 +60,16 @@
 #define DEVICE_INFO_PROTOCOL_HANDSHAKE 30
 #define DEVICE_INFO_COMMAND_ACK        31
 #define DEVICE_INFO_RUNTIME_MODE       32
+// Per-joint servo parameter report (one message per arm joint, re-announced with the
+// handshake so late subscribers always receive it):
+//   param_int[0]   = joint index (0-based)
+//   param_int[1]   = motor answered the SPD-range query (0/1)
+//   param_int[2]   = motor answered the TOR-range query (0/1)
+//   param_float[0..1] = effective codec velocity range min/max (rad/s)
+//   param_float[2..3] = effective codec torque range min/max (Nm)
+//   param_float[4..5] = motor-reported SPD range min/max (rad/s; valid per param_int[1])
+//   param_float[6..7] = motor-reported TOR range min/max (Nm; valid per param_int[2])
+#define DEVICE_INFO_SERVO_PARAM        33
 
 #define PI_CONTROL_PROTOCOL_VERSION_MAJOR 1
 #define PI_CONTROL_PROTOCOL_VERSION_MINOR 1

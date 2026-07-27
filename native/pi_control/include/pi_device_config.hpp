@@ -78,7 +78,6 @@ class DeviceConfig {
 
     const std::string fn_planning_type                        = "planning_type";                    ///< Field name for moving trajectory planning type.
     const std::string val_planning_type_none                      = "None";                            ///< Value for no planning.
-    const std::string val_planning_type_slew_pos_gravity          = "slew_pos_gravity";                 ///< Value for synchronized velocity-limited position tracking + gravity compensation torque.
 
     const std::string fn_joint_init_sequence    = "joint_init_sequence";  ///< Field name for joint initialization sequence.
     const std::string fn_joints                 = "joints";              ///< Field name for joints.

@@ -201,6 +201,16 @@ ReturnCode ServoDm::init_config_model(const json& servo_config, const DeviceConf
         return ReturnCode::NOT_SUPPORTED;
     }
 
+    // MIT codec full scales in one line: together with the per-arm torq_rescale
+    // summary this lets the effective gravity feed-forward delivery be
+    // reconstructed from the logs alone (delivered = rescale x physical / codec).
+    const ServoDmParam* p_param = (const ServoDmParam*)p_servo_param_;
+    PI_INFO("Servo", InfoLevel::ESSENTIAL_0,
+            "Servo ID %d (%s): MIT codec full scales pos [%.1f, %.1f] rad, vel [%.1f, %.1f] rad/s, "
+            "tor [%.1f, %.1f] Nm",
+            id_, servo_model_.c_str(), p_param->pos_min_, p_param->pos_max_, p_param->vel_min_, p_param->vel_max_,
+            p_param->tor_min_, p_param->tor_max_);
+
     return ReturnCode::SUCCESS;
 }
 
@@ -758,6 +768,149 @@ ReturnCode ServoDm::can_frame_to_get_can_timeout_encos_servo(DriverCan::can_fram
     can_frame.data[0] = (uint8_t)(kEncosMotorModeConfigGet << 5);
     can_frame.data[1] = kEncosConfigGetCanTimeoutMs;
 
+    return ReturnCode::SUCCESS;
+}
+
+ReturnCode ServoDm::can_frame_to_get_mit_range_encos_servo(DriverCan::can_frame_t& can_frame, uint16_t motor_id,
+                                                           uint8_t query_code) {
+    // ENCOS config-query frame (technical document 9.3): header byte 0 carries the
+    // motor mode in the top 3 bits (0x07 = CONFIG_GET), byte 1 the query code.
+    constexpr uint8_t kEncosMotorModeConfigGet = 0x07;
+
+    if (query_code != ENCOS_QUERY_SPD_RANGE && query_code != ENCOS_QUERY_TOR_RANGE) {
+        PI_ERROR("Unsupported ENCOS MIT-range query code %u (motor ID %d)", query_code, motor_id);
+        return ReturnCode::INVALID_PARAM;
+    }
+
+    can_frame = {};
+    can_frame.can_dlc = 2;
+    can_frame.can_id = motor_id;
+
+    can_frame.data[0] = (uint8_t)(kEncosMotorModeConfigGet << 5);
+    can_frame.data[1] = query_code;
+
+    return ReturnCode::SUCCESS;
+}
+
+ReturnCode ServoDm::parse_mit_range_reply_encos_servo(const DriverCan::can_frame_t& can_frame, uint16_t motor_id,
+                                                      uint8_t query_code, float scale, float& range_min,
+                                                      float& range_max) {
+    // ACK_QUERY reply (technical document 10.5): byte 0 top 3 bits = 5 (query ack),
+    // byte 1 echoes the query code, bytes 2..5 carry the MIN/MAX pair as
+    // big-endian int16 values in the query's fixed-point scale.
+    constexpr uint8_t kEncosAckQuery = 5;
+
+    if (can_frame.can_id != motor_id || can_frame.can_dlc < 6) {
+        return ReturnCode::FAIL;
+    }
+    if ((uint8_t)(can_frame.data[0] >> 5) != kEncosAckQuery || can_frame.data[1] != query_code) {
+        return ReturnCode::FAIL;
+    }
+    const int16_t raw_min = (int16_t)(((uint16_t)can_frame.data[2] << 8) | (uint16_t)can_frame.data[3]);
+    const int16_t raw_max = (int16_t)(((uint16_t)can_frame.data[4] << 8) | (uint16_t)can_frame.data[5]);
+    range_min = (float)raw_min * scale;
+    range_max = (float)raw_max * scale;
+    return ReturnCode::SUCCESS;
+}
+
+bool ServoDm::get_mit_codec_report(MitCodecReport& report) const {
+    const ServoDmParam* p_param = (const ServoDmParam*)p_servo_param_;
+    if (p_param == nullptr) {
+        return false;
+    }
+    report.codec_vel_min = p_param->vel_min_;
+    report.codec_vel_max = p_param->vel_max_;
+    report.codec_tor_min = p_param->tor_min_;
+    report.codec_tor_max = p_param->tor_max_;
+    report.reported_spd_valid = reported_spd_range_valid_;
+    report.reported_spd_min = reported_spd_min_;
+    report.reported_spd_max = reported_spd_max_;
+    report.reported_tor_valid = reported_tor_range_valid_;
+    report.reported_tor_min = reported_tor_min_;
+    report.reported_tor_max = reported_tor_max_;
+    report.pos_kp = get_effective_pos_kp();
+    report.pos_kd = pos_kd_;
+    return true;
+}
+
+ReturnCode ServoDm::adopt_encos_mit_range(uint8_t query_code, float range_min, float range_max) {
+    const ServoDmParam* p_current = (const ServoDmParam*)p_servo_param_;
+    if (p_current == nullptr) {
+        PI_ERROR("Servo ID %d: cannot adopt ENCOS MIT range before init_config_model", id_);
+        return ReturnCode::NOT_INITIALIZED;
+    }
+    if (!(range_min < range_max)) {
+        PI_ERROR("Servo ID %d: rejected ENCOS MIT range [%.2f, %.2f] for query code %u (min >= max)", id_, range_min,
+                 range_max, query_code);
+        return ReturnCode::FAIL;
+    }
+
+    float current_min = 0.0f;
+    float current_max = 0.0f;
+    const char* label = nullptr;
+    const char* unit = nullptr;
+    switch (query_code) {
+        case ENCOS_QUERY_SPD_RANGE:
+            current_min = p_current->vel_min_;
+            current_max = p_current->vel_max_;
+            label = "SPD";
+            unit = "rad/s";
+            break;
+        case ENCOS_QUERY_TOR_RANGE:
+            current_min = p_current->tor_min_;
+            current_max = p_current->tor_max_;
+            label = "TOR";
+            unit = "Nm";
+            break;
+        default:
+            PI_ERROR("Servo ID %d: unsupported ENCOS MIT-range query code %u", id_, query_code);
+            return ReturnCode::INVALID_PARAM;
+    }
+
+    // Keep the reported firmware range verbatim (even when the compiled codec is
+    // retained below): the client servo-parameter report compares these across
+    // arms to detect mixed motor batches (e.g. ENCOS TOR registers of 30 vs 42 Nm).
+    if (query_code == ENCOS_QUERY_SPD_RANGE) {
+        reported_spd_range_valid_ = true;
+        reported_spd_min_ = range_min;
+        reported_spd_max_ = range_max;
+    } else {
+        reported_tor_range_valid_ = true;
+        reported_tor_min_ = range_min;
+        reported_tor_max_ = range_max;
+    }
+
+    constexpr float kRangeMatchEpsilon = 1e-3f;
+    if (fabs(range_min - current_min) <= kRangeMatchEpsilon && fabs(range_max - current_max) <= kRangeMatchEpsilon) {
+        PI_INFO("Servo", InfoLevel::ESSENTIAL_0,
+                "Servo ID %d: ENCOS MIT %s range [%.1f, %.1f] %s matches the compiled codec default", id_, label,
+                range_min, range_max, unit);
+        return ReturnCode::SUCCESS;
+    }
+
+    if (query_code == ENCOS_QUERY_TOR_RANGE) {
+        // Verify-and-log only: delivered-torque conformance testing showed the
+        // physical torque full scale does not follow the firmware register (the ENCOS
+        // A4310 delivers over +-42 Nm while reporting +-30), and the model JSON
+        // torq_rescale factors are calibrated against the compiled codec, so
+        // adopting the register would silently shift gravity feed-forward
+        // delivery.
+        PI_ERROR("Servo ID %d: ENCOS MIT TOR range [%.1f, %.1f] Nm DIFFERS from the compiled default [%.1f, %.1f]; "
+                 "keeping the compiled codec (model torq_rescale is conformance-calibrated against it)",
+                 id_, range_min, range_max, current_min, current_max);
+        return ReturnCode::SUCCESS;
+    }
+
+    if (!encos_param_override_.has_value()) {
+        encos_param_override_ = *p_current;
+    }
+    encos_param_override_->vel_min_ = range_min;
+    encos_param_override_->vel_max_ = range_max;
+    p_servo_param_ = &encos_param_override_.value();
+    PI_INFO("Servo", InfoLevel::ESSENTIAL_0,
+            "Servo ID %d: ENCOS MIT %s range [%.1f, %.1f] %s DIFFERS from the compiled default [%.1f, %.1f]; "
+            "codec rescaled to the motor's reported range",
+            id_, label, range_min, range_max, unit, current_min, current_max);
     return ReturnCode::SUCCESS;
 }
 

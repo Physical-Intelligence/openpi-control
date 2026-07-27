@@ -155,7 +155,8 @@ if(OPENPI_CONTROL_BUILD_TESTING)
   list(REMOVE_ITEM PI_TOPIC_ZMQ_TEST_SOURCES src/pi_control_node.cpp)
 
   add_executable(pi_topic_zmq_tests
-    tests/test_driver_arx.cpp
+    tests/test_command_line_args.cpp
+    tests/test_driver_can_mit.cpp
     tests/test_topic_zmq.cpp
     ${PI_TOPIC_ZMQ_TEST_SOURCES}
   )

@@ -62,6 +62,7 @@ from .types import (
     ArmState,
     EffectorState,
     InputState,
+    JointServoReport,
     JointState,
     PositionCommand,
 )
@@ -249,6 +250,7 @@ class NativeArmBackend(ArmBackend):
         self._inputs_sequence = 0
         self._input_layout = InputLayout()
         self._capabilities: ArmCapabilities | None = None
+        self._servo_params: dict[int, JointServoReport] = {}
         self._condition = threading.Condition()
         self._connect_lock = threading.RLock()
         self._close_lock = threading.Lock()
@@ -299,6 +301,7 @@ class NativeArmBackend(ArmBackend):
             self._inputs = None
             self._inputs_sequence = 0
             self._capabilities = None
+            self._servo_params = {}
             self._acks.clear()
             self._pending_ack_request_id = None
             self._request_id = 0
@@ -446,11 +449,25 @@ class NativeArmBackend(ArmBackend):
         ]
         if self._paired_follower_state_topic:
             args.extend(["--paired_follower_state_topic", self._paired_follower_state_topic])
-        if role is ArmRole.FOLLOWER and config.follower_gravity_compensation:
-            # Arm-device-scoped MonoPi-style synchronized slew tracking plus
-            # gravity/damping feedforward. The attached effector keeps the
-            # planner from its own model config.
-            args.extend(["--arm_planning_type", "slew_pos_gravity"])
+        if config.torq_rescale is not None:
+            # Highest-precedence gravity-delivery calibration (devices.toml
+            # [arms] follower_torq_rescale / leader_torq_rescale, per the
+            # arm's role): the node applies it after the model and individual
+            # configs. Passed for every role so the arm_check gravity-float
+            # calibration run sees the same values.
+            args.extend(["--torq_rescale", ",".join(f"{value:g}" for value in config.torq_rescale)])
+        if role is ArmRole.FOLLOWER and config.follower_gravity_compensation is not None:
+            # Gravity/damping feedforward on every follower
+            # position command, independent of the planning type. Scoped to
+            # the arm device: the attached effector never receives it. When
+            # None, the flag stays at "config" and the arm's individual config
+            # JSON (follower_gravity_compensation field) decides.
+            args.extend(
+                [
+                    "--follower_gravity_compensation",
+                    "true" if config.follower_gravity_compensation else "false",
+                ]
+            )
         if role is ArmRole.LEADER and config.leader_gravity_compensation:
             args.append("--leader_gravity_compensation")
         if config.safety_torque_mode:
@@ -788,6 +805,19 @@ class NativeArmBackend(ArmBackend):
                     # State and status use independent ZMQ topics, so consume a
                     # state sample after the correlated completion before returning.
                     self._pending_ready_state_generation = self._state_generation
+            elif status is NativeStatus.SERVO_PARAM and len(ints) >= 6 and len(floats) >= 9:
+                # The wire format caps a device-info message at 10 floats, so
+                # the position gains travel in the int slots as milli-units.
+                self._servo_params[ints[0]] = JointServoReport(
+                    codec_vel_range=(floats[0], floats[1]),
+                    codec_tor_range=(floats[2], floats[3]),
+                    reported_spd_range=(floats[4], floats[5]) if ints[1] else None,
+                    reported_tor_range=(floats[6], floats[7]) if ints[2] else None,
+                    torq_rescale=floats[8],
+                    pos_kp=ints[4] / 1000.0,
+                    pos_kd=ints[5] / 1000.0,
+                    gravity_feed_forward=bool(ints[3]),
+                )
             elif status is NativeStatus.MODE and self._state and ints:
                 mode_values = list(ArmMode)
                 if 0 <= ints[0] < len(mode_values):
@@ -1005,6 +1035,27 @@ class NativeArmBackend(ArmBackend):
             else:
                 raise CommandRejectedError(f"native runtime cannot directly enter {mode}")
             self._replace_mode(mode, expected_reader=reader)
+
+    def enter_gravity_float(self, drift_abort_rad: float | None = None) -> None:
+        # Follower calibration float: the runaway judgment lives in the native
+        # control loop (a client round trip is too slow to save the arm), so
+        # the threshold is shipped with the command instead of being enforced
+        # here.
+        with self._mode_lock:
+            with self._condition:
+                reader = self._reader
+            floats = () if drift_abort_rad is None else (float(drift_abort_rad),)
+            self._send_lifecycle(NativeCommand.ENTER_GRAVITY_COMPENSATION, floats=floats)
+            self._replace_mode(ArmMode.GRAVITY_COMPENSATION, expected_reader=reader)
+
+    def set_torq_rescale(self, values: tuple[float, ...]) -> None:
+        self._send_lifecycle(
+            NativeCommand.SET_TORQ_RESCALE, floats=tuple(float(value) for value in values)
+        )
+
+    def servo_reports(self) -> dict[int, JointServoReport]:
+        with self._condition:
+            return dict(self._servo_params)
 
     def set_force_feedback_gain(self, gain: float) -> None:
         self._send_lifecycle(NativeCommand.SET_FORCE_FEEDBACK_GAIN, floats=(gain,))

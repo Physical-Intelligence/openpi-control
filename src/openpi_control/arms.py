@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from threading import RLock
 
 from .backend import ArmBackend
@@ -9,7 +10,15 @@ from .config import ArmConfig
 from .exceptions import CommandRejectedError, ConfigurationError
 from .native import NativeArmBackend
 from .protocol import ArmTopics
-from .types import ArmCapabilities, ArmMode, ArmRole, ArmState, InputState, PositionCommand
+from .types import (
+    ArmCapabilities,
+    ArmMode,
+    ArmRole,
+    ArmState,
+    InputState,
+    JointServoReport,
+    PositionCommand,
+)
 
 
 class _Arm:
@@ -133,6 +142,53 @@ class FollowerArm(_Arm):
     def hold(self) -> None:
         with self._dispatch_lock:
             self._backend.hold()
+
+    def enter_gravity_compensation(self, drift_abort_rad: float | None = None) -> None:
+        """Calibration gravity float: the arm rests on the gravity feed-forward alone.
+
+        Position control (and the live command stream) is suspended until
+        hold() or move_to_ready() re-engages it at the current pose. The native
+        control loop itself re-engages HOLD the moment any joint drifts beyond
+        ``drift_abort_rad`` (node default when None) — the runaway judgment is
+        deliberately not done client-side, a round trip is too slow to save the
+        arm. Used by the gravity_tune torq_rescale calibration and follower
+        float checks.
+        """
+        with self._dispatch_lock:
+            self._backend.enter_gravity_float(drift_abort_rad)
+
+    def set_torq_rescale(self, values: tuple[float, ...] | list[float]) -> None:
+        """Runtime per-joint torq_rescale update (one value per arm joint).
+
+        Applied by the native node within one control tick, without a restart,
+        so calibration candidates switch while the arm keeps holding. The node
+        rejects a count that does not match the arm DOF.
+        """
+        with self._dispatch_lock:
+            self._backend.set_torq_rescale(tuple(float(value) for value in values))
+
+    def servo_reports(self, timeout_s: float = 5.0) -> dict[int, JointServoReport]:
+        """Per-joint servo parameter reports (codec + motor-reported firmware ranges).
+
+        The node announces one joint per publish (round-robin at ~10 Hz — the
+        status sockets run with a tiny HWM, so a burst would be dropped), so a
+        complete set arrives within about one second of connect. Raises
+        TimeoutError when fewer than DOF reports arrive in time. Used by
+        gravity_tune to compare two arms' servo parameters before assuming one
+        torq_rescale calibration fits both.
+        """
+        dof = self.capabilities.dof
+        deadline = time.monotonic() + timeout_s
+        while True:
+            reports = self._backend.servo_reports()
+            if len(reports) >= dof:
+                return reports
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"{self.name}: received servo parameter reports for {len(reports)} of "
+                    f"{dof} joints within {timeout_s:g}s"
+                )
+            time.sleep(0.05)
 
     def move_to_ready(self) -> None:
         with self._dispatch_lock:

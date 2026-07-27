@@ -331,6 +331,68 @@ class ServoDm : public Servo {
     static ReturnCode parse_can_timeout_reply_encos_servo(const DriverCan::can_frame_t& can_frame, uint16_t motor_id,
                                                           uint16_t& timeout_ms);
 
+    // ENCOS MIT-protocol range queries (technical document 9.3 / reply type 5,
+    // 10.5). The wire codec ranges are per-motor firmware parameters, so the
+    // compiled defaults may not match a given motor (some motor batches ship
+    // with a wider TOR range than the EC-A4310-P2-36 factory default).
+    static constexpr uint8_t ENCOS_QUERY_SPD_RANGE = 26;  ///< Query code: MIT SPD range (int16 pair, scale 100).
+    static constexpr uint8_t ENCOS_QUERY_TOR_RANGE = 27;  ///< Query code: MIT TOR range (int16 pair, scale 10).
+    static constexpr float ENCOS_SPD_RANGE_SCALE = 0.01f;  ///< rad/s per raw count in a SPD-range reply.
+    static constexpr float ENCOS_TOR_RANGE_SCALE = 0.1f;   ///< Nm per raw count in a TOR-range reply.
+
+    /*!
+     * @brief Constructs an ENCOS config-query frame for an MIT-protocol range.
+     * @param can_frame Reference to the CAN frame structure to be filled.
+     * @param motor_id The CAN ID of the target motor.
+     * @param query_code ENCOS_QUERY_SPD_RANGE or ENCOS_QUERY_TOR_RANGE.
+     * @return ReturnCode indicating success or failure.
+     */
+    static ReturnCode can_frame_to_get_mit_range_encos_servo(DriverCan::can_frame_t& can_frame, uint16_t motor_id,
+                                                             uint8_t query_code);
+
+    /*!
+     * @brief Parses the ACK_QUERY reply to an MIT-range query (codes 26/27).
+     * @param can_frame The received reply frame.
+     * @param motor_id Expected motor CAN ID.
+     * @param query_code Expected query code echoed in the reply.
+     * @param scale Physical units per raw count (ENCOS_SPD_RANGE_SCALE / ENCOS_TOR_RANGE_SCALE).
+     * @param range_min Out: queried range minimum in physical units.
+     * @param range_max Out: queried range maximum in physical units.
+     * @return ReturnCode::SUCCESS when the frame is a matching reply, FAIL otherwise.
+     */
+    static ReturnCode parse_mit_range_reply_encos_servo(const DriverCan::can_frame_t& can_frame, uint16_t motor_id,
+                                                        uint8_t query_code, float scale, float& range_min,
+                                                        float& range_max);
+
+    /*!
+     * @brief Handles a motor-reported MIT codec range for this servo's encode/decode.
+     *
+     * SPD ranges are adopted: the compiled parameter set is copied into a
+     * per-servo override on first use so both the command builder and the
+     * status parser scale against the motor's actual firmware range.
+     *
+     * TOR ranges are verify-and-log only: delivered-torque conformance testing
+     * showed the physical torque full scale does not follow the firmware register
+     * (ENCOS A4310 delivers over +-42 Nm while reporting +-30), and the model
+     * JSON torq_rescale factors are calibrated against the compiled codec, so
+     * adopting the register would silently shift the gravity feed-forward
+     * delivery. A mismatch is logged loudly and the compiled codec is kept.
+     *
+     * @param query_code ENCOS_QUERY_SPD_RANGE or ENCOS_QUERY_TOR_RANGE.
+     * @param range_min Queried range minimum in physical units.
+     * @param range_max Queried range maximum in physical units.
+     * @return ReturnCode::SUCCESS, or FAIL when the values are not a sane range.
+     */
+    ReturnCode adopt_encos_mit_range(uint8_t query_code, float range_min, float range_max);
+
+    /*!
+     * @brief MIT codec report: effective codec ranges plus the motor-reported firmware ranges.
+     *
+     * Lets clients (gravity_tune) compare the servo parameters of two arms before assuming
+     * one torq_rescale calibration fits both (ENCOS batches report different TOR registers).
+     */
+    bool get_mit_codec_report(MitCodecReport& report) const override;
+
    protected:
     /*!
      * @brief Initializes the current estimation system for the DM servo.
@@ -349,4 +411,15 @@ class ServoDm : public Servo {
     bool motor_moved_ = false;  ///< Flag indicating whether the motor has moved from its initial position.
     uint8_t last_reported_fault_code_ = 0;  ///< Last DM fault logged, to avoid repeating it every control loop.
     bool thermal_fault_latched_ = false;  ///< Thermal effector fault: output was disabled and must not be re-enabled.
+    /// Per-servo codec parameter override, populated when an ENCOS MIT-range
+    /// query reports a range that must replace the compiled default.
+    std::optional<ServoDmParam> encos_param_override_;
+    /// Motor-reported MIT firmware ranges (ENCOS range query), kept verbatim for the
+    /// client servo-parameter report even when the compiled codec is retained.
+    bool reported_spd_range_valid_ = false;
+    float reported_spd_min_ = 0.0f;  ///< Motor-reported SPD range minimum (rad/s).
+    float reported_spd_max_ = 0.0f;  ///< Motor-reported SPD range maximum (rad/s).
+    bool reported_tor_range_valid_ = false;
+    float reported_tor_min_ = 0.0f;  ///< Motor-reported TOR range minimum (Nm).
+    float reported_tor_max_ = 0.0f;  ///< Motor-reported TOR range maximum (Nm).
 };

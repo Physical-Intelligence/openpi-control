@@ -465,23 +465,14 @@ ReturnCode Device::init(const CommandLineArgs& cla, int argc, char** argv, std::
         planning_type = cla.planning_type;
     }
 
-    // Arm-scoped override: lets a client enable e.g. gravity-compensated follower
-    // planning on the arm without dragging the attached effector onto the same
-    // planner (a trapezoidal gripper would crawl through its travel) and without
-    // editing the shared model config that leaders also load.
-    if (type_ == DeviceType::ARM && !cla.arm_planning_type.empty()
-        && cla.arm_planning_type != OPT_DEFAULT_NONE) {
-        planning_type = cla.arm_planning_type;
-    }
-
     PI_INFO("Device", InfoLevel::HELPFUL_1, "%s_%s: planning_type=%s", model_.c_str(), id_.c_str(),
             planning_type.c_str());
 
     if (planning_type == p_config_model_->val_planning_type_none) {
         planning_type_ = TrajectoryPlanningType::NONE;
-    } else if (planning_type == p_config_model_->val_planning_type_slew_pos_gravity) {
-        planning_type_ = TrajectoryPlanningType::SLEW_POS_GRAVITY;
     } else {
+        // Gravity compensation is no longer a planning type; it is the
+        // independent --follower_gravity_compensation flag.
         PI_ERROR("Unsupported planning type '%s' for %s_%s", planning_type.c_str(), model_.c_str(), id_.c_str());
         return ReturnCode::NOT_SUPPORTED;
     }
@@ -644,20 +635,21 @@ ReturnCode Device::move(Joint* p_joint, float target_pos, float target_tor,
     p_joint->adjusted_target_pos_ = target_pos;
 
     ReturnCode return_code;
-    if (planning_type_ == TrajectoryPlanningType::SLEW_POS_GRAVITY) {
-        p_joint->prev_target_pos_ = target_pos;
+    // The synchronized follower slew integrates from the last commanded
+    // target, so keep it current for every path.
+    p_joint->prev_target_pos_ = target_pos;
+    if (follower_gravity_compensation_) {
+        // Gravity feed-forward is independent of the planning type: the
+        // position command carries the model gravity torque computed by the
+        // caller (DeviceArm::operate_as_follower fills target_tor).
+        // torq_rescale matches the leader gravity paths exactly:
+        // Servo::apply_torque rescales internally but the 3-arg move does
+        // not, so the leader-validated per-joint factor is applied here.
         p_joint->target_tor_ = target_tor;
-        return_code = p_joint->move(target_pos, 0, target_tor);
+        return_code = p_joint->move(target_pos, 0, target_tor * p_joint->torq_rescale_);
         p_joint->prev_target_tor_ = target_tor;
-    } else if (planning_type_ == TrajectoryPlanningType::NONE) {
-        // The synchronized follower slew integrates from the last commanded
-        // target for every planning type, so keep it current here too.
-        p_joint->prev_target_pos_ = target_pos;
-        return_code = p_joint->move(target_pos);
     } else {
-        PI_ERROR("Invalid planning type %d in %s_%s", (int)planning_type_,
-                 model_.c_str(), id_.c_str());
-        return ReturnCode::INVALID_PARAM;
+        return_code = p_joint->move(target_pos);
     }
 
     if (return_code != ReturnCode::SUCCESS) {

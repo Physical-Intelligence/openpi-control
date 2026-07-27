@@ -1109,6 +1109,47 @@ def test_consume_status_mode_update_replaces_state_mode():
     backend.close()
 
 
+def test_consume_status_servo_param_populates_reports():
+    # One DEVICE_INFO_SERVO_PARAM message per joint: effective codec ranges,
+    # the motor-reported firmware ranges (gravity_tune compares them across arms
+    # before assuming one torq_rescale calibration fits both), the applied
+    # torq_rescale, the position gains (milli-units in the int slots — the wire
+    # format caps a message at 10 floats) and the gravity feed-forward flag.
+    backend = make_consuming_backend()
+    # Exactly representable in the wire float32 so the assertions compare equal.
+    floats = (-21.0, 21.0, -30.0, 30.0, -20.5, 20.5, -42.0, 42.0, 0.75)
+    backend._consume_status(
+        STATUS_STRUCT.pack(
+            int(NativeStatus.SERVO_PARAM), len(floats), 6,
+            *(floats + (0.0,) * (10 - len(floats))),
+            *((1, 1, 1, 1, 40000, 1500) + (0,) * 4),
+        )
+    )
+    # A joint without a range query (DM wrist): valid flags 0 -> reported None.
+    backend._consume_status(
+        STATUS_STRUCT.pack(
+            int(NativeStatus.SERVO_PARAM), len(floats), 6,
+            *(floats + (0.0,) * (10 - len(floats))),
+            *((3, 0, 0, 0, 25500, 800) + (0,) * 4),
+        )
+    )
+    reports = backend.servo_reports()
+    assert reports[1].codec_vel_range == (-21.0, 21.0)
+    assert reports[1].codec_tor_range == (-30.0, 30.0)
+    assert reports[1].reported_spd_range == (-20.5, 20.5)
+    assert reports[1].reported_tor_range == (-42.0, 42.0)
+    assert reports[1].torq_rescale == 0.75
+    assert reports[1].pos_kp == 40.0
+    assert reports[1].pos_kd == 1.5
+    assert reports[1].gravity_feed_forward is True
+    assert reports[3].reported_spd_range is None
+    assert reports[3].reported_tor_range is None
+    assert reports[3].pos_kp == 25.5
+    assert reports[3].pos_kd == 0.8
+    assert reports[3].gravity_feed_forward is False
+    backend.close()
+
+
 def test_state_packet_cannot_overwrite_a_concurrent_mode_transition():
     class CoordinatedCondition:
         def __init__(self) -> None:

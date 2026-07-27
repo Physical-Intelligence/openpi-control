@@ -6,6 +6,11 @@
 
 #include "pi_command_line_args.hpp"
 
+#include <cctype>
+#include <cmath>
+#include <cstddef>
+#include <sstream>
+
 #include <boost/program_options.hpp>
 
 #include "pi_device.hpp"
@@ -13,6 +18,30 @@
 #include "pi_topic.hpp"
 
 namespace po = boost::program_options;
+
+std::vector<float> CommandLineArgs::parse_torq_rescale_csv(const std::string& csv) {
+    std::vector<float> values;
+    std::istringstream stream(csv);
+    std::string token;
+    while (std::getline(stream, token, ',')) {
+        std::size_t consumed = 0;
+        float value = 0.0f;
+        try {
+            value = std::stof(token, &consumed);
+        } catch (const std::invalid_argument&) {
+            return {};
+        } catch (const std::out_of_range&) {
+            return {};
+        }
+        // Reject trailing garbage (e.g. "0.8x") and non-physical values.
+        while (consumed < token.size() && std::isspace(static_cast<unsigned char>(token[consumed]))) consumed++;
+        if (consumed != token.size() || !std::isfinite(value) || value < 0.0f) {
+            return {};
+        }
+        values.push_back(value);
+    }
+    return values;
+}
 
 CommandLineArgs::CommandLineArgs(int argc, char** argv) {
     // Parse command line arguments
@@ -102,9 +131,12 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         OPT_PLANING_TYPE,
         po::value<std::string>()->default_value(OPT_PLANING_TYPE_DEFAULT),
         "Planning type of waypoint generation")(
-        OPT_ARM_PLANNING_TYPE,
-        po::value<std::string>()->default_value(OPT_DEFAULT_NONE),
-        "Planning type override applied to ARM devices only")(OPT_FORCE_FEEDBACK,
+        OPT_FOLLOWER_GRAVITY_COMPENSATION,
+        po::value<std::string>()->default_value(OPT_FOLLOWER_GRAVITY_COMPENSATION_DEFAULT),
+        "Follower gravity feed-forward override: config (arm individual JSON decides), true, or false")(
+        OPT_TORQ_RESCALE, po::value<std::string>()->default_value(""),
+        "Per-joint torq_rescale override, comma-separated (one value per arm joint); "
+        "empty leaves the model/individual config values")(OPT_FORCE_FEEDBACK,
                                                                po::value<float>()->default_value(0.0f),
                                                                "Force feedback parameter")(
         OPT_TOPIC_STATE, po::value<std::string>()->default_value(""),
@@ -517,11 +549,32 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         exit(2);
     }
 
-    if (vm.count(OPT_ARM_PLANNING_TYPE)) {
-        arm_planning_type = vm[OPT_ARM_PLANNING_TYPE].as<std::string>();
-        if (arm_planning_type != OPT_DEFAULT_NONE) {
-            PI_INFO("main()", InfoLevel::ESSENTIAL_0, "Arm planning type override: %s",
-                    arm_planning_type.c_str());
+    if (vm.count(OPT_FOLLOWER_GRAVITY_COMPENSATION)) {
+        follower_gravity_compensation_override = vm[OPT_FOLLOWER_GRAVITY_COMPENSATION].as<std::string>();
+        if (follower_gravity_compensation_override != OPT_FOLLOWER_GRAVITY_COMPENSATION_DEFAULT &&
+            follower_gravity_compensation_override != "true" && follower_gravity_compensation_override != "false") {
+            PI_ERROR("--%s must be one of config/true/false, got '%s'", OPT_FOLLOWER_GRAVITY_COMPENSATION,
+                     follower_gravity_compensation_override.c_str());
+            exit(2);
+        }
+        PI_INFO("main()", InfoLevel::ESSENTIAL_0, "Follower gravity compensation override: %s",
+                follower_gravity_compensation_override.c_str());
+    } else {
+        PI_ERROR("--%s is not set", OPT_FOLLOWER_GRAVITY_COMPENSATION);
+        exit(2);
+    }
+
+    if (vm.count(OPT_TORQ_RESCALE)) {
+        const std::string torq_rescale_csv = vm[OPT_TORQ_RESCALE].as<std::string>();
+        if (!torq_rescale_csv.empty()) {
+            torq_rescale_override = parse_torq_rescale_csv(torq_rescale_csv);
+            if (torq_rescale_override.empty()) {
+                PI_ERROR("--%s must be comma-separated nonnegative finite floats, got '%s'", OPT_TORQ_RESCALE,
+                         torq_rescale_csv.c_str());
+                exit(2);
+            }
+            PI_INFO("main()", InfoLevel::ESSENTIAL_0, "torq_rescale override requested: %s",
+                    torq_rescale_csv.c_str());
         }
     }
 

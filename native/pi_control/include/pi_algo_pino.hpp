@@ -54,6 +54,12 @@ class AlgoPino : public Algo {
     ReturnCode gravity_compensation(const std::vector<float>& joint_positions,
                                     std::vector<float>& calculated_torques) override;
 
+    /*!
+     * @brief AlgoPino computes RNEA gravity torques from the loaded URDF.
+     * @return Always true (init fails without a valid URDF).
+     */
+    bool has_gravity_model() const override { return true; }
+
    private:
     pinocchio::Model model_;                    ///< Pinocchio model structure.
     pinocchio::Data data_;                      ///< Pinocchio data structure.

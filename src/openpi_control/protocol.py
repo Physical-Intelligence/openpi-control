@@ -36,6 +36,7 @@ class NativeCommand(IntEnum):
     SET_FORCE_FEEDBACK_GAIN = 32
     HOLD = 33
     HEARTBEAT = 34
+    SET_TORQ_RESCALE = 35
 
 
 class NativeStatus(IntEnum):
@@ -47,6 +48,7 @@ class NativeStatus(IntEnum):
     HANDSHAKE = 30
     COMMAND_ACK = 31
     MODE = 32
+    SERVO_PARAM = 33
 
 
 CAP_DIRECT = 1 << 0
