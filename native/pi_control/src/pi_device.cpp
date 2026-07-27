@@ -8,12 +8,12 @@
 #include <cmath>
 
 #include "pi_device.hpp"
-#include "pi_device_arm_arx.hpp"
-#include "pi_device_arm_nello.hpp"
+#include "pi_device_arm_can.hpp"
+#include "pi_device_arm_serial.hpp"
 #include "pi_device_config.hpp"
-#include "pi_device_effector_arx.hpp"
+#include "pi_device_effector_can.hpp"
 #include "pi_device_effector_controller.hpp"
-#include "pi_device_effector_nello.hpp"
+#include "pi_device_effector_serial.hpp"
 #include "pi_info.hpp"
 
 Device::Device(const CommandLineArgs& cla)
@@ -465,23 +465,14 @@ ReturnCode Device::init(const CommandLineArgs& cla, int argc, char** argv, std::
         planning_type = cla.planning_type;
     }
 
-    // Arm-scoped override: lets a client enable e.g. gravity-compensated follower
-    // planning on the arm without dragging the attached effector onto the same
-    // planner (a trapezoidal gripper would crawl through its travel) and without
-    // editing the shared model config that leaders also load.
-    if (type_ == DeviceType::ARM && !cla.arm_planning_type.empty()
-        && cla.arm_planning_type != OPT_DEFAULT_NONE) {
-        planning_type = cla.arm_planning_type;
-    }
-
     PI_INFO("Device", InfoLevel::HELPFUL_1, "%s_%s: planning_type=%s", model_.c_str(), id_.c_str(),
             planning_type.c_str());
 
     if (planning_type == p_config_model_->val_planning_type_none) {
         planning_type_ = TrajectoryPlanningType::NONE;
-    } else if (planning_type == p_config_model_->val_planning_type_slew_pos_gravity) {
-        planning_type_ = TrajectoryPlanningType::SLEW_POS_GRAVITY;
     } else {
+        // Gravity compensation is no longer a planning type; it is the
+        // independent --follower_gravity_compensation flag.
         PI_ERROR("Unsupported planning type '%s' for %s_%s", planning_type.c_str(), model_.c_str(), id_.c_str());
         return ReturnCode::NOT_SUPPORTED;
     }
@@ -576,9 +567,9 @@ Device* Device::new_device(const DeviceConfig& cfg_model, const DeviceConfig& cf
             std::string arm_type;
             return_code = cfg_model.get_field_value(cfg_model.values_, cfg_model.fn_arm_type, arm_type);
             if (return_code == ReturnCode::SUCCESS) {
-                if (arm_type == cfg_model.val_arm_type_arx) {
-                    p_device = new DeviceArmArx(cla);
-                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceArmArx for %s_%s", cla.device_model.c_str(),
+                if (arm_type == cfg_model.val_arm_type_can) {
+                    p_device = new DeviceArmCan(cla);
+                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceArmCan for %s_%s", cla.device_model.c_str(),
                             cla.device_id.c_str());
                 } else if (arm_type == cfg_model.val_arm_type_controller) {
                     // Whole-arm controller arms use the DeviceArm base directly:
@@ -587,9 +578,9 @@ Device* Device::new_device(const DeviceConfig& cfg_model, const DeviceConfig& cf
                     p_device = new DeviceArm(cla);
                     PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceArm (controller) for %s_%s",
                             cla.device_model.c_str(), cla.device_id.c_str());
-                } else if (arm_type == cfg_model.val_arm_type_nello) {
-                    p_device = new DeviceArmNello(cla);
-                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceArmNello for %s_%s",
+                } else if (arm_type == cfg_model.val_arm_type_serial) {
+                    p_device = new DeviceArmSerial(cla);
+                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceArmSerial for %s_%s",
                             cla.device_model.c_str(), cla.device_id.c_str());
                 } else {
                     PI_ERROR("Invalid arm type: %s", arm_type.c_str());
@@ -603,17 +594,17 @@ Device* Device::new_device(const DeviceConfig& cfg_model, const DeviceConfig& cf
             std::string effector_type;
             return_code = cfg_model.get_field_value(cfg_model.values_, cfg_model.fn_effector_type, effector_type);
             if (return_code == ReturnCode::SUCCESS) {
-                if (effector_type == cfg_model.val_effector_type_arx) {
-                    p_device = new DeviceEffectorArx(cla);
-                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceEffectorArx for %s_%s",
+                if (effector_type == cfg_model.val_effector_type_can) {
+                    p_device = new DeviceEffectorCan(cla);
+                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceEffectorCan for %s_%s",
                             cla.device_model.c_str(), cla.device_id.c_str());
                 } else if (effector_type == cfg_model.val_effector_type_controller) {
                     p_device = new DeviceEffectorController(cla);
                     PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceEffectorController for %s_%s",
                             cla.device_model.c_str(), cla.device_id.c_str());
-                } else if (effector_type == cfg_model.val_effector_type_nello) {
-                    p_device = new DeviceEffectorNello(cla);
-                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceEffectorNello for %s_%s",
+                } else if (effector_type == cfg_model.val_effector_type_serial) {
+                    p_device = new DeviceEffectorSerial(cla);
+                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceEffectorSerial for %s_%s",
                             cla.device_model.c_str(), cla.device_id.c_str());
                 } else {
                     PI_ERROR("Invalid effector type: %s", effector_type.c_str());
@@ -644,20 +635,21 @@ ReturnCode Device::move(Joint* p_joint, float target_pos, float target_tor,
     p_joint->adjusted_target_pos_ = target_pos;
 
     ReturnCode return_code;
-    if (planning_type_ == TrajectoryPlanningType::SLEW_POS_GRAVITY) {
-        p_joint->prev_target_pos_ = target_pos;
+    // The synchronized follower slew integrates from the last commanded
+    // target, so keep it current for every path.
+    p_joint->prev_target_pos_ = target_pos;
+    if (follower_gravity_compensation_) {
+        // Gravity feed-forward is independent of the planning type: the
+        // position command carries the model gravity torque computed by the
+        // caller (DeviceArm::operate_as_follower fills target_tor).
+        // torq_rescale matches the leader gravity paths exactly:
+        // Servo::apply_torque rescales internally but the 3-arg move does
+        // not, so the leader-validated per-joint factor is applied here.
         p_joint->target_tor_ = target_tor;
-        return_code = p_joint->move(target_pos, 0, target_tor);
+        return_code = p_joint->move(target_pos, 0, target_tor * p_joint->torq_rescale_);
         p_joint->prev_target_tor_ = target_tor;
-    } else if (planning_type_ == TrajectoryPlanningType::NONE) {
-        // The synchronized follower slew integrates from the last commanded
-        // target for every planning type, so keep it current here too.
-        p_joint->prev_target_pos_ = target_pos;
-        return_code = p_joint->move(target_pos);
     } else {
-        PI_ERROR("Invalid planning type %d in %s_%s", (int)planning_type_,
-                 model_.c_str(), id_.c_str());
-        return ReturnCode::INVALID_PARAM;
+        return_code = p_joint->move(target_pos);
     }
 
     if (return_code != ReturnCode::SUCCESS) {

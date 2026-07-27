@@ -6,7 +6,15 @@ from abc import ABC, abstractmethod
 
 from .config import ArmConfig
 from .protocol import ArmTopics
-from .types import ArmCapabilities, ArmMode, ArmRole, ArmState, InputState, PositionCommand
+from .types import (
+    ArmCapabilities,
+    ArmMode,
+    ArmRole,
+    ArmState,
+    InputState,
+    JointServoReport,
+    PositionCommand,
+)
 
 
 class ArmBackend(ABC):
@@ -44,6 +52,18 @@ class ArmBackend(ABC):
 
     @abstractmethod
     def set_mode(self, mode: ArmMode) -> None: ...
+
+    def enter_gravity_float(self, drift_abort_rad: float | None = None) -> None:
+        """Follower calibration gravity float with an in-loop runaway threshold (rad)."""
+        raise NotImplementedError
+
+    def set_torq_rescale(self, values: tuple[float, ...]) -> None:
+        """Runtime per-joint torq_rescale update (calibration tools; no node restart)."""
+        raise NotImplementedError
+
+    def servo_reports(self) -> dict[int, JointServoReport]:
+        """Per-joint servo parameter reports received so far (may be incomplete)."""
+        raise NotImplementedError
 
     @abstractmethod
     def set_force_feedback_gain(self, gain: float) -> None: ...

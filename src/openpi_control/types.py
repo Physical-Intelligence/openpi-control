@@ -187,6 +187,33 @@ class PositionCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class JointServoReport:
+    """One joint's servo parameters as the native node reports them.
+
+    The codec ranges scale every wire command/status; the reported ranges come
+    from the motor's own firmware registers (ENCOS range query) and expose
+    batch differences (e.g. TOR registers of 30 vs 42 Nm) that make one
+    torq_rescale calibration invalid for another arm. Reported ranges are None
+    for motor families without a range query.
+
+    torq_rescale, pos_kp and pos_kd are the values the node actually applies
+    (after every config layer and runtime update), so consumers such as the
+    rollout dump can record the effective calibration without re-deriving it
+    from config files. gravity_feed_forward is device-level (the follower
+    gravity feed-forward on/off state) and repeats on every joint's report.
+    """
+
+    codec_vel_range: tuple[float, float]
+    codec_tor_range: tuple[float, float]
+    reported_spd_range: tuple[float, float] | None
+    reported_tor_range: tuple[float, float] | None
+    torq_rescale: float
+    pos_kp: float
+    pos_kd: float
+    gravity_feed_forward: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ArmCapabilities:
     protocol_version: tuple[int, int]
     model: str

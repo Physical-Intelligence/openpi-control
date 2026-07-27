@@ -162,7 +162,7 @@ class Driver {
 
    protected:
     // RegisteredServo / lock_registered_servo are protected (not private) so
-    // driver subclasses (e.g. DriverArx::arm_comm_loss_protection) can take a
+    // driver subclasses (e.g. DriverCanMit::arm_comm_loss_protection) can take a
     // locked registry snapshot with the same discipline as the parsers.
     class RegisteredServo {
        public:

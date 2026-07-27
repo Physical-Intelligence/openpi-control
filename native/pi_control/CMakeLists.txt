@@ -76,7 +76,7 @@ set(COMMON_SOURCES
   src/pi_topic.cpp
   src/pi_topic_zmq.cpp
   src/pi_driver.cpp
-  src/pi_driver_arx.cpp
+  src/pi_driver_can_mit.cpp
   src/pi_driver_arx_encoder.cpp
   src/pi_driver_can.cpp
   src/pi_driver_controller.cpp
@@ -94,12 +94,12 @@ set(COMMON_SOURCES
   src/pi_servo_can_encoder.cpp
   src/pi_device.cpp
   src/pi_device_arm.cpp
-  src/pi_device_arm_arx.cpp
-  src/pi_device_arm_nello.cpp
+  src/pi_device_arm_can.cpp
+  src/pi_device_arm_serial.cpp
   src/pi_device_effector.cpp
-  src/pi_device_effector_arx.cpp
+  src/pi_device_effector_can.cpp
   src/pi_device_effector_controller.cpp
-  src/pi_device_effector_nello.cpp
+  src/pi_device_effector_serial.cpp
   src/pi_device_config.cpp
   src/pi_algo.cpp
   src/pi_algo_pino.cpp
@@ -155,7 +155,8 @@ if(OPENPI_CONTROL_BUILD_TESTING)
   list(REMOVE_ITEM PI_TOPIC_ZMQ_TEST_SOURCES src/pi_control_node.cpp)
 
   add_executable(pi_topic_zmq_tests
-    tests/test_driver_arx.cpp
+    tests/test_command_line_args.cpp
+    tests/test_driver_can_mit.cpp
     tests/test_topic_zmq.cpp
     ${PI_TOPIC_ZMQ_TEST_SOURCES}
   )

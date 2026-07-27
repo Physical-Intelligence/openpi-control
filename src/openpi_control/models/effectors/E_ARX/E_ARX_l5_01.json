@@ -1,10 +1,12 @@
 {
     "config_version": "1.3.1",
-    "device_model": "E_SO101",
+    "device_model": "E_ARX",
     "device_type": "effector",
-    "effector_type": "serial",
+    "effector_type": "can",
     "spring_effect": false,
-    "control_mode": "position",
+    "control_mode": "torque",
+    "dist_to_torque_const": 4.44,
+    "grip_spring_offset": 0.1,
     "base_rpy": [
         0,
         0,
@@ -17,14 +19,14 @@
     ],
     "joints": [
         {
-            "joint_id": 5,
+            "joint_id": 6,
             "reference_servo_index": 0,
             "servos": [
                 {
-                    "servo_id": 6,
-                    "zero_pos": 0.0,
-                    "home_pos": 0.0,
-                    "spring_home_pos": 0.0
+                    "servo_id": 8,
+                    "zero_pos": 0.019,
+                    "home_pos": 0,
+                    "spring_home_pos": 4.9
                 }
             ]
         }

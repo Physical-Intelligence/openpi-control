@@ -1,8 +1,8 @@
 {
-    "config_version": "1.1.1",
+    "config_version": "1.3.1",
     "device_model": "E_ARX_ENC",
     "device_type": "effector",
-    "effector_type": "arx",
+    "effector_type": "can",
     "topic_type": "ROS",
     "driver_type": "CAN_ENCODER",
     "algo_type": "Algo",
@@ -42,6 +42,7 @@
                     "servo_id": 1543,
                     "data_index": 6,
                     "dir_invert": 1,
+                    "abs_position": true,
                     "reverse_flag": false,
                     "pos_max": 1.2379,
                     "pos_min": 0,

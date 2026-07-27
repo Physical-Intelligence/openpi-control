@@ -4,6 +4,7 @@
  */
 
 #pragma once
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -71,6 +72,7 @@ class Servo {
     float kv_ = 0;                                            ///< Velocity conversion constant: servo_value * kv_ = velocity in rad/sec.
     float ka_ = 0;                                            ///< Current conversion constant: servo_value * ka_ = current in mA.
     int dir_invert_ = 1;                                      ///< Direction inversion flag: 1 = normal direction, -1 = inverted direction.
+    bool abs_position_ = false;                               ///< Sign-agnostic position reads: relative positions are reported as their absolute value. For read-only encoders whose feedback sign varies per unit (ARX_ENC gripper: the vendor reference applies abs() so left/right gripper hardware read identically). Never set on actuated servos: the relative-to-absolute command conversion stays sign-preserving.
     float zero_pos_abs_ = 0;                                  ///< Zero/home position in absolute radian (reference for relative coordinates).
     float position_wrap_period_ = 0;                           ///< Optional single-turn feedback period; 0 disables startup unwrapping.
     float position_wrap_offset_rel_ = 0;                       ///< Runtime whole-turn offset added in the relative position frame.
@@ -106,6 +108,40 @@ class Servo {
      * @brief Destructor.
      */
     virtual ~Servo();
+
+    /*!
+     * @brief Snapshot of a servo's MIT codec ranges and the motor-reported firmware ranges.
+     *
+     * The effective codec ranges scale every wire command/status; the reported ranges come
+     * from the motor's own firmware registers (ENCOS range query) and expose batch
+     * differences (e.g. ENCOS TOR registers of 30 vs 42 Nm) that make one torq_rescale
+     * calibration invalid for another arm. Reported ranges are absent for motor families
+     * without a range query (valid flags false).
+     */
+    struct MitCodecReport {
+        float codec_vel_min = 0.0f;      ///< Effective codec velocity range minimum (rad/s).
+        float codec_vel_max = 0.0f;      ///< Effective codec velocity range maximum (rad/s).
+        float codec_tor_min = 0.0f;      ///< Effective codec torque range minimum (Nm).
+        float codec_tor_max = 0.0f;      ///< Effective codec torque range maximum (Nm).
+        bool reported_spd_valid = false; ///< True when the motor answered the SPD-range query.
+        float reported_spd_min = 0.0f;   ///< Motor-reported SPD range minimum (rad/s).
+        float reported_spd_max = 0.0f;   ///< Motor-reported SPD range maximum (rad/s).
+        bool reported_tor_valid = false; ///< True when the motor answered the TOR-range query.
+        float reported_tor_min = 0.0f;   ///< Motor-reported TOR range minimum (Nm).
+        float reported_tor_max = 0.0f;   ///< Motor-reported TOR range maximum (Nm).
+        float pos_kp = 0.0f;             ///< Effective position kp sent in position frames.
+        float pos_kd = 0.0f;             ///< Position kd sent in position frames.
+        float torq_rescale = 1.0f;       ///< Applied gravity-delivery torque rescale (filled by Joint).
+    };
+
+    /*!
+     * @brief Fills the MIT codec report for this servo.
+     * @return true when the servo has an MIT codec (DM/ENCOS families), false otherwise.
+     */
+    virtual bool get_mit_codec_report(MitCodecReport& report) const {
+        (void)report;
+        return false;
+    }
 
     /*!
      * @brief Safely parks the servo before shutdown.
@@ -212,7 +248,7 @@ class Servo {
     /*!
      * @brief Enables or disables torque output of the servo.
      *
-     * Virtual so device code (e.g. DeviceEffectorNello) can toggle torque on
+     * Virtual so device code (e.g. DeviceEffectorSerial) can toggle torque on
      * any bus-servo family without casting to a concrete type. The default
      * implementation fast-fails for servo families without a torque enable
      * register.
@@ -229,7 +265,7 @@ class Servo {
      * @brief Applies torque while retaining the servo's configured derivative damping.
      *
      * Servo families that do not support a separate damping gain fall back to
-     * their normal torque command. This is used by monopi-style gripper
+     * their normal torque command. This is used by torque-spring gripper
      * control; arm gravity/torque commands continue to use apply_torque().
      *
      * @param torque Torque to be applied in Nm.
@@ -242,7 +278,8 @@ class Servo {
      * @return Current position in relative radian.
      */
     float get_pos_rad_relative() {
-        return (curr_pos_abs_ - zero_pos_abs_) * dir_invert_ + position_wrap_offset_rel_;
+        const float relative = (curr_pos_abs_ - zero_pos_abs_) * dir_invert_ + position_wrap_offset_rel_;
+        return abs_position_ ? std::fabs(relative) : relative;
     }
 
     /*!
@@ -251,7 +288,8 @@ class Servo {
      * @return The converted relative radian value.
      */
     float get_pos_rad_relative(float rad_absolute) {
-        return (rad_absolute - zero_pos_abs_) * dir_invert_ + position_wrap_offset_rel_;
+        const float relative = (rad_absolute - zero_pos_abs_) * dir_invert_ + position_wrap_offset_rel_;
+        return abs_position_ ? std::fabs(relative) : relative;
     }
 
     /*!
@@ -346,7 +384,7 @@ class Servo {
      *        cached position.
      *
      * Servo types whose driver keeps a receive-time stamp (ServoDm via the
-     * DriverArx cache) override this; the base returns -1 (unknown) so
+     * DriverCanMit cache) override this; the base returns -1 (unknown) so
      * publishers can tell "freshness not tracked" apart from a real age.
      *
      * @return Frame age in milliseconds, or -1 when the servo type does not
@@ -374,9 +412,9 @@ class Servo {
      * Move-to-ready and emergency recovery must NOT inherit that weak spring:
      * those moves have to carry the arm against gravity, and at gain 0.1-0.3
      * the wrist joints get kp 1-3, the move stalls, per-joint stuck detection
-     * latches, and the device force-parks mid-recovery and falls. The ARX
+     * latches, and the device force-parks mid-recovery and falls. The CAN-MIT
      * family has no control-mode switch to escape through
-     * (DeviceArmArx::set_control_mode is a no-op), so the escape lives here.
+     * (DeviceArmCan::set_control_mode is a no-op), so the escape lives here.
      *
      * @return Adjusted position proportional gain (Kp).
      */

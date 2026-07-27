@@ -1,6 +1,6 @@
 /*!
- * @file pi_driver_arx.cpp
- * @brief Implementation of the DriverArx class for ARX device CAN bus communication and servo control.
+ * @file pi_driver_can_mit.cpp
+ * @brief Implementation of the DriverCanMit class for MIT-mode CAN bus communication and servo control.
  */
 
 #include <unistd.h>
@@ -19,7 +19,7 @@
 #include "pi_servo_can_encoder.hpp"
 #include "pi_servo_dm.hpp"
 #include "pi_servo_dm_status.hpp"
-#include "pi_driver_arx.hpp"
+#include "pi_driver_can_mit.hpp"
 
 namespace {
 
@@ -60,7 +60,7 @@ int dm_response_motor_id(const DriverCan::can_frame_t& frame) {
 
 }  // namespace
 
-DriverArx::DriverArx(Device* p_device, const CommandLineArgs& cla) : DriverCan(p_device, cla) {
+DriverCanMit::DriverCanMit(Device* p_device, const CommandLineArgs& cla) : DriverCan(p_device, cla) {
     // ReceivedServoData has in-class member initializers, so default
     // construction zero-fills the cache. ``last_update_perf_`` is left at
     // its default ``prof_time_t{}`` sentinel so ``Profile::is_zero``
@@ -70,9 +70,9 @@ DriverArx::DriverArx(Device* p_device, const CommandLineArgs& cla) : DriverCan(p
     }
 }
 
-DriverArx::~DriverArx() {}
+DriverCanMit::~DriverCanMit() {}
 
-ReturnCode DriverArx::open(int baud_rate) {
+ReturnCode DriverCanMit::open(int baud_rate) {
     (void)baud_rate;
 
     ReturnCode return_code = DriverCan::open(baud_rate);
@@ -100,7 +100,7 @@ ReturnCode DriverArx::open(int baud_rate) {
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DriverArx::configure_passive_encoders() {
+ReturnCode DriverCanMit::configure_passive_encoders() {
     // request_can_id -> firmware_compat. A single encoder may have several
     // routes; OR their flags so any route opting into compat mode enables it.
     std::map<int, bool> request_firmware_compat;
@@ -126,7 +126,7 @@ ReturnCode DriverArx::configure_passive_encoders() {
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DriverArx::configure_passive_encoder(int request_can_id, bool firmware_compat) {
+ReturnCode DriverCanMit::configure_passive_encoder(int request_can_id, bool firmware_compat) {
     const uint8_t version_request[] = {kPassiveEncoderAllDevices, kPassiveEncoderReqVersion};
     ReturnCode return_code =
         send_passive_encoder_request(request_can_id, version_request, sizeof(version_request));
@@ -223,7 +223,7 @@ ReturnCode DriverArx::configure_passive_encoder(int request_can_id, bool firmwar
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DriverArx::send_passive_encoder_request(int request_can_id, const uint8_t* p_data, uint8_t data_len) {
+ReturnCode DriverCanMit::send_passive_encoder_request(int request_can_id, const uint8_t* p_data, uint8_t data_len) {
     if (p_data == nullptr || data_len == 0 || data_len > 8) {
         return ReturnCode::INVALID_PARAM;
     }
@@ -235,7 +235,7 @@ ReturnCode DriverArx::send_passive_encoder_request(int request_can_id, const uin
     return send_frame(&frame, sizeof(frame));
 }
 
-ReturnCode DriverArx::wait_for_passive_encoder_reply(int request_can_id, int expected_device,
+ReturnCode DriverCanMit::wait_for_passive_encoder_reply(int request_can_id, int expected_device,
                                                      uint8_t expected_command, uint8_t expected_len,
                                                      int timeout_ms, can_frame_t* p_reply) {
     if (p_reply == nullptr) {
@@ -263,7 +263,7 @@ ReturnCode DriverArx::wait_for_passive_encoder_reply(int request_can_id, int exp
     return ReturnCode::NO_RESPONSE;
 }
 
-ReturnCode DriverArx::read_passive_encoder_eeprom(int request_can_id, uint8_t device, uint8_t offset,
+ReturnCode DriverCanMit::read_passive_encoder_eeprom(int request_can_id, uint8_t device, uint8_t offset,
                                                   uint8_t* p_value, bool firmware_compat) {
     if (p_value == nullptr) {
         return ReturnCode::INVALID_PARAM;
@@ -323,7 +323,7 @@ ReturnCode DriverArx::read_passive_encoder_eeprom(int request_can_id, uint8_t de
     return ReturnCode::NO_RESPONSE;
 }
 
-ReturnCode DriverArx::read_passive_encoder_frequency(int request_can_id, uint8_t device, uint8_t high_offset,
+ReturnCode DriverCanMit::read_passive_encoder_frequency(int request_can_id, uint8_t device, uint8_t high_offset,
                                                      uint8_t low_offset, int* p_frequency, bool firmware_compat) {
     if (p_frequency == nullptr) {
         return ReturnCode::INVALID_PARAM;
@@ -353,7 +353,7 @@ ReturnCode DriverArx::read_passive_encoder_frequency(int request_can_id, uint8_t
     return ReturnCode::SUCCESS;
 }
 
-void DriverArx::drain_startup_frames() {
+void DriverCanMit::drain_startup_frames() {
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(kPassiveEncoderDrainTimeoutMs);
     while (std::chrono::steady_clock::now() < deadline) {
@@ -369,7 +369,7 @@ void DriverArx::drain_startup_frames() {
     }
 }
 
-ReturnCode DriverArx::close() {
+ReturnCode DriverCanMit::close() {
     ReturnCode return_code = DriverCan::close();
     if (return_code != ReturnCode::SUCCESS) {
         PI_ERROR("Failed to close CAN driver");
@@ -379,17 +379,17 @@ ReturnCode DriverArx::close() {
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DriverArx::group_read_hardware_values() {
+ReturnCode DriverCanMit::group_read_hardware_values() {
     // Reset the per-cycle output. We need a CLEAN dead_servo_ids_ on every
     // call so the set always reflects the current cycle's staleness (DXL
-    // keeps a sticky cache because re-pinging is expensive, but the ARX
+    // keeps a sticky cache because re-pinging is expensive, but the CAN-MIT
     // path is just an O(N) timestamp compare so per-cycle is cheap and
     // simpler).
     dead_servo_ids_.clear();
     last_failed_servo_id_ = -1;
 
     if (p_device_ == nullptr) {
-        PI_ERROR("Device pointer is null in DriverArx::group_read_hardware_values()");
+        PI_ERROR("Device pointer is null in DriverCanMit::group_read_hardware_values()");
         return ReturnCode::FAIL;
     }
 
@@ -402,8 +402,8 @@ ReturnCode DriverArx::group_read_hardware_values() {
 
     const prof_time_t now = Profile::get_time_now();
     const prof_time_msec_t threshold_ms = any_motor_moved_
-        ? static_cast<prof_time_msec_t>(ARX_STALE_FRAME_AGE_NORMAL_MS)
-        : static_cast<prof_time_msec_t>(ARX_STALE_FRAME_AGE_INITIAL_MS);
+        ? static_cast<prof_time_msec_t>(CAN_MIT_STALE_FRAME_AGE_NORMAL_MS)
+        : static_cast<prof_time_msec_t>(CAN_MIT_STALE_FRAME_AGE_INITIAL_MS);
 
     bool any_alive_this_cycle = false;
     {
@@ -445,11 +445,11 @@ ReturnCode DriverArx::group_read_hardware_values() {
             // published position silently repeats the cached value meanwhile)
             // leave evidence in the node log. Recovery logs the gap length.
             const auto warned_it = stall_warned_since_.find(servo_id);
-            if (age_ms > static_cast<prof_time_msec_t>(ARX_STALL_WARN_AGE_MS)) {
+            if (age_ms > static_cast<prof_time_msec_t>(CAN_MIT_STALL_WARN_AGE_MS)) {
                 if (warned_it == stall_warned_since_.end()) {
                     PI_WARN("Servo id=%d: telemetry stalled (newest frame is %ld ms old, warn threshold=%d ms); "
                             "publishing the cached position meanwhile",
-                            servo_id, static_cast<long>(age_ms), ARX_STALL_WARN_AGE_MS);
+                            servo_id, static_cast<long>(age_ms), CAN_MIT_STALL_WARN_AGE_MS);
                     stall_warned_since_[servo_id] = last_update;
                 }
             } else if (warned_it != stall_warned_since_.end()) {
@@ -479,7 +479,54 @@ ReturnCode DriverArx::group_read_hardware_values() {
     return ReturnCode::FAIL;
 }
 
-ReturnCode DriverArx::arm_comm_loss_protection() {
+void DriverCanMit::query_and_adopt_encos_mit_ranges(int id) {
+    struct RangeQuery {
+        uint8_t code;
+        float scale;
+        const char* label;
+    };
+    constexpr RangeQuery kQueries[] = {
+        {ServoDm::ENCOS_QUERY_SPD_RANGE, ServoDm::ENCOS_SPD_RANGE_SCALE, "SPD"},
+        {ServoDm::ENCOS_QUERY_TOR_RANGE, ServoDm::ENCOS_TOR_RANGE_SCALE, "TOR"},
+    };
+
+    for (const RangeQuery& query : kQueries) {
+        can_frame_t frame;
+        if (ServoDm::can_frame_to_get_mit_range_encos_servo(frame, (uint16_t)id, query.code) != ReturnCode::SUCCESS) {
+            continue;
+        }
+        if (send_frame(&frame, sizeof(frame)) != ReturnCode::SUCCESS) {
+            PI_ERROR("Servo id=%d: ENCOS MIT %s range query NOT sent; keeping the compiled codec default", id,
+                     query.label);
+            continue;
+        }
+
+        can_frame_t reply_frame;
+        float range_min = 0.0f;
+        float range_max = 0.0f;
+        if (read_frame(&reply_frame, sizeof(reply_frame)) != ReturnCode::SUCCESS ||
+            ServoDm::parse_mit_range_reply_encos_servo(reply_frame, (uint16_t)id, query.code, query.scale, range_min,
+                                                       range_max) != ReturnCode::SUCCESS) {
+            // Loud but non-fatal: older firmware may not answer the query; the
+            // servo stays controllable with the compiled default scale.
+            PI_ERROR("Servo id=%d: ENCOS MIT %s range query got no valid reply; keeping the compiled codec default",
+                     id, query.label);
+            continue;
+        }
+
+        RegisteredServo reg = lock_registered_servo(id);
+        ServoDm* p_servo = dynamic_cast<ServoDm*>(reg.get());
+        if (p_servo == nullptr) {
+            PI_ERROR("Servo id=%d: not registered as a DM/ENCOS servo; ENCOS MIT %s range not adopted", id,
+                     query.label);
+            continue;
+        }
+        (void)p_servo->adopt_encos_mit_range(query.code, range_min, range_max);
+        usleep(100);
+    }
+}
+
+ReturnCode DriverCanMit::arm_comm_loss_protection() {
     if (!is_socket_open()) {
         PI_ERROR("CAN socket is not initialized in arm_comm_loss_protection()");
         return ReturnCode::NOT_INITIALIZED;
@@ -522,6 +569,14 @@ ReturnCode DriverArx::arm_comm_loss_protection() {
         can_frame_t frame;
         switch (type) {
             case ServoType::ENCOS_A4310: {
+                // The MIT codec ranges are per-motor firmware parameters: adopt the
+                // motor's actual SPD range before the command stream starts so
+                // velocity commands and feedback are not mis-scaled. The TOR range
+                // is verify-and-log only (see ServoDm::adopt_encos_mit_range): the
+                // physical torque scale is conformance-calibrated via the model
+                // JSON torq_rescale against the compiled codec.
+                query_and_adopt_encos_mit_ranges(id);
+
                 // Heartbeat window (factory default 500 ms). The setting is persistent
                 // (non-volatile), so query the current window first and only write on
                 // mismatch to limit flash wear. A failed query falls back to an
@@ -626,7 +681,7 @@ ReturnCode DriverArx::arm_comm_loss_protection() {
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DriverArx::update_encoder_slot(int data_index, int motor_id, float angle_rad) {
+ReturnCode DriverCanMit::update_encoder_slot(int data_index, int motor_id, float angle_rad) {
     if (data_index < 0 || data_index >= MAX_SERVO_INFO_BUF_SIZE) {
         PI_ERROR("update_encoder_slot: data_index %d out of range", data_index);
         return ReturnCode::FAIL;
@@ -642,7 +697,7 @@ ReturnCode DriverArx::update_encoder_slot(int data_index, int motor_id, float an
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DriverArx::send_command(ServoDm* p_servo_dm, float kp, float kd, float position, float velocity,
+ReturnCode DriverCanMit::send_command(ServoDm* p_servo_dm, float kp, float kd, float position, float velocity,
                                    float torque) {
     if (p_servo_dm == nullptr) {
         PI_ERROR("Invalid servo pointer in send_command()");
@@ -680,7 +735,7 @@ ReturnCode DriverArx::send_command(ServoDm* p_servo_dm, float kp, float kd, floa
     }
 }
 
-ReturnCode DriverArx::enable(int id, int type, bool enable_flag, bool defer_effector_thermal_fault) {
+ReturnCode DriverCanMit::enable(int id, int type, bool enable_flag, bool defer_effector_thermal_fault) {
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     last_enable_fault_status_ = -1;
     if (is_socket_open()) {
@@ -811,7 +866,7 @@ ReturnCode DriverArx::enable(int id, int type, bool enable_flag, bool defer_effe
                                 std::lock_guard<std::mutex> lock(received_servo_data_mutex_);
                                 ReturnCode parse_rc = ServoDm::parse_dm_servo_status(
                                     &response_frame, received_servo_data_,
-                                    &DriverArx::find_data_index, this);
+                                    &DriverCanMit::find_data_index, this);
                                 if (parse_rc != ReturnCode::SUCCESS) {
                                     PI_WARN("Failed to parse enable response status for servo id=%d (rc=%d)",
                                             id, static_cast<int>(parse_rc));
@@ -947,7 +1002,7 @@ ReturnCode DriverArx::enable(int id, int type, bool enable_flag, bool defer_effe
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DriverArx::send_disable_once(int id, int type) {
+ReturnCode DriverCanMit::send_disable_once(int id, int type) {
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     if (!is_socket_open()) {
         PI_ERROR("CAN socket is not initialized");
@@ -972,7 +1027,7 @@ ReturnCode DriverArx::send_disable_once(int id, int type) {
     return return_code;
 }
 
-ReturnCode DriverArx::register_passive_encoder(int response_can_id, int encoder_id, int data_index,
+ReturnCode DriverCanMit::register_passive_encoder(int response_can_id, int encoder_id, int data_index,
                                                bool firmware_compat) {
     if (data_index < 0 || data_index >= MAX_SERVO_INFO_BUF_SIZE) {
         PI_ERROR("Passive encoder id=%d: data_index %d out of range [0, %d)", encoder_id, data_index,
@@ -1001,7 +1056,7 @@ ReturnCode DriverArx::register_passive_encoder(int response_can_id, int encoder_
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DriverArx::reset_zero_position(int id, int type) {
+ReturnCode DriverCanMit::reset_zero_position(int id, int type) {
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     if (is_socket_open()) {
         can_frame_t frame;
@@ -1032,7 +1087,7 @@ ReturnCode DriverArx::reset_zero_position(int id, int type) {
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DriverArx::read_hardware_values(Servo* p_servo) {
+ReturnCode DriverCanMit::read_hardware_values(Servo* p_servo) {
     if (p_servo == nullptr) {
         PI_ERROR("Invalid servo pointer in read_hardware_values()");
         return ReturnCode::FAIL;
@@ -1077,7 +1132,7 @@ ReturnCode DriverArx::read_hardware_values(Servo* p_servo) {
     return DriverCan::read_hardware_values(p_servo);
 }
 
-void DriverArx::handle_received_message(void* p_data_buf, size_t data_buf_size, size_t read_bytes) {
+void DriverCanMit::handle_received_message(void* p_data_buf, size_t data_buf_size, size_t read_bytes) {
     if (p_data_buf == nullptr) {
         PI_ERROR("Invalid data buffer in handle_received_message()");
         return;
@@ -1114,7 +1169,7 @@ void DriverArx::handle_received_message(void* p_data_buf, size_t data_buf_size, 
 
     if (dm_response_motor_id(*p_frame) >= 0) {
         return_code =
-            ServoDm::parse_dm_servo_status(p_frame, received_servo_data_, &DriverArx::find_data_index, this);
+            ServoDm::parse_dm_servo_status(p_frame, received_servo_data_, &DriverCanMit::find_data_index, this);
         if (return_code != ReturnCode::SUCCESS) {
             PI_ERROR("Failed to parse DM servo status message (CAN ID: 0x%02X)", p_frame->can_id);
         }
@@ -1130,7 +1185,7 @@ void DriverArx::handle_received_message(void* p_data_buf, size_t data_buf_size, 
         case 0x06:
         case 0x07:
             return_code =
-                ServoDm::parser_encos_servo_status(p_frame, received_servo_data_, &DriverArx::find_data_index);
+                ServoDm::parser_encos_servo_status(p_frame, received_servo_data_, &DriverCanMit::find_data_index);
             if (return_code != ReturnCode::SUCCESS) {
                 PI_ERROR("Failed to parse ENCOS servo status message (CAN ID: 0x%02X)", p_frame->can_id);
                 return;

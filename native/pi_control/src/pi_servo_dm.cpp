@@ -41,7 +41,7 @@ const ServoDmParam g_servo_dm_param_arx_encoder(0.0f, 0.0f, 0.0f, 0.0f, -12.5f, 
 
 ServoDm::ServoDm(Device* p_device, Joint* p_joint, Driver* p_driver)
     : Servo(p_device, p_joint, p_driver), checker_motor_no_response_(MAX_CNT_MOTOR_NO_RESPONSE_INITIAL) {
-    p_driver_can_ = dynamic_cast<DriverArx*>(p_driver);
+    p_driver_can_ = dynamic_cast<DriverCanMit*>(p_driver);
 }
 
 ServoDm::~ServoDm() {
@@ -175,7 +175,7 @@ ReturnCode ServoDm::init_current_estimation(std::string& servo_model, const Devi
 
 ReturnCode ServoDm::init_config_model(const json& servo_config, const DeviceConfig* p_config) {
     if (p_driver_can_ == nullptr) {
-        PI_ERROR("DM servo requires an ARX CAN driver");
+        PI_ERROR("DM servo requires a DriverCanMit driver");
         return ReturnCode::NOT_INITIALIZED;
     }
 
@@ -200,6 +200,16 @@ ReturnCode ServoDm::init_config_model(const json& servo_config, const DeviceConf
         PI_ERROR("Unsupported servo model '%s' (servo ID %d)", servo_model_.c_str(), id_);
         return ReturnCode::NOT_SUPPORTED;
     }
+
+    // MIT codec full scales in one line: together with the per-arm torq_rescale
+    // summary this lets the effective gravity feed-forward delivery be
+    // reconstructed from the logs alone (delivered = rescale x physical / codec).
+    const ServoDmParam* p_param = (const ServoDmParam*)p_servo_param_;
+    PI_INFO("Servo", InfoLevel::ESSENTIAL_0,
+            "Servo ID %d (%s): MIT codec full scales pos [%.1f, %.1f] rad, vel [%.1f, %.1f] rad/s, "
+            "tor [%.1f, %.1f] Nm",
+            id_, servo_model_.c_str(), p_param->pos_min_, p_param->pos_max_, p_param->vel_min_, p_param->vel_max_,
+            p_param->tor_min_, p_param->tor_max_);
 
     return ReturnCode::SUCCESS;
 }
@@ -235,7 +245,7 @@ ReturnCode ServoDm::start_hardware() {
             get_device_type_belong_to() == DeviceType::EFFECTOR) {
             const DmServoStatusInfo& status = dm_servo_status_info(static_cast<uint8_t>(status_code));
             if (status.is_thermal_fault) {
-                // DriverArx cached the fault response before returning. Refresh the
+                // DriverCanMit cached the fault response before returning. Refresh the
                 // servo fields so the terminal fault message reports that snapshot.
                 p_driver_can_->read_hardware_values(this);
                 idc_current_ = current_estimation_.estimate_idc_calibrated(
@@ -261,7 +271,7 @@ ReturnCode ServoDm::verify_position_fresh() {
         return ReturnCode::NOT_INITIALIZED;
     }
     // DM/ENCOS slot is considered fresh once the asynchronous CAN parser (or the enable
-    // response path in DriverArx::enable()) has written into received_servo_data_. The
+    // response path in DriverCanMit::enable()) has written into received_servo_data_. The
     // motor_id_ field is zero-initialised and motor IDs start at 1, so a non-zero value
     // proves at least one status frame was parsed.
     const int cached_id = p_driver_can_->get_received_motor_id(data_index_);
@@ -440,8 +450,8 @@ ReturnCode ServoDm::apply_torque_with_damping(float torque) {
 }
 
 ReturnCode ServoDm::parse_dm_servo_status(DriverCan::can_frame_t* p_frame, ReceivedServoData* p_received_servo_data,
-                                          DriverArx::func_find_data_index_t p_find_data_index,
-                                          DriverArx* p_driver_arx) {
+                                          DriverCanMit::func_find_data_index_t p_find_data_index,
+                                          DriverCanMit* p_driver_can_mit) {
     if (p_frame == nullptr) {
         PI_ERROR("Invalid CAN frame pointer");
         return ReturnCode::INVALID_PARAM;
@@ -457,8 +467,8 @@ ReturnCode ServoDm::parse_dm_servo_status(DriverCan::can_frame_t* p_frame, Recei
         return ReturnCode::INVALID_PARAM;
     }
 
-    if (p_driver_arx == nullptr) {
-        PI_ERROR("Invalid ARX driver pointer");
+    if (p_driver_can_mit == nullptr) {
+        PI_ERROR("Invalid CAN-MIT driver pointer");
         return ReturnCode::INVALID_PARAM;
     }
 
@@ -521,7 +531,7 @@ ReturnCode ServoDm::parse_dm_servo_status(DriverCan::can_frame_t* p_frame, Recei
 }
 
 ReturnCode ServoDm::parser_encos_servo_status(DriverCan::can_frame_t* p_frame, ReceivedServoData* p_received_servo_data,
-                                              DriverArx::func_find_data_index_t p_find_data_index) {
+                                              DriverCanMit::func_find_data_index_t p_find_data_index) {
     if (p_frame == nullptr) {
         PI_ERROR("Invalid CAN frame pointer");
         return ReturnCode::INVALID_PARAM;
@@ -553,7 +563,7 @@ ReturnCode ServoDm::parser_encos_servo_status(DriverCan::can_frame_t* p_frame, R
     if (data_len < 8) {
         // Short frames on an ENCOS channel are config-set acknowledgements (e.g.
         // the ack for the CAN-timeout write sent by
-        // DriverArx::arm_comm_loss_protection), not status reports. Byte0[0:4]
+        // DriverCanMit::arm_comm_loss_protection), not status reports. Byte0[0:4]
         // is NOT a motor-error field in these frames, so only stamp bus
         // liveness -- never the error/position/velocity telemetry.
         p_received_servo_data[data_index].motor_id_ = motor_id;
@@ -761,6 +771,149 @@ ReturnCode ServoDm::can_frame_to_get_can_timeout_encos_servo(DriverCan::can_fram
     return ReturnCode::SUCCESS;
 }
 
+ReturnCode ServoDm::can_frame_to_get_mit_range_encos_servo(DriverCan::can_frame_t& can_frame, uint16_t motor_id,
+                                                           uint8_t query_code) {
+    // ENCOS config-query frame (technical document 9.3): header byte 0 carries the
+    // motor mode in the top 3 bits (0x07 = CONFIG_GET), byte 1 the query code.
+    constexpr uint8_t kEncosMotorModeConfigGet = 0x07;
+
+    if (query_code != ENCOS_QUERY_SPD_RANGE && query_code != ENCOS_QUERY_TOR_RANGE) {
+        PI_ERROR("Unsupported ENCOS MIT-range query code %u (motor ID %d)", query_code, motor_id);
+        return ReturnCode::INVALID_PARAM;
+    }
+
+    can_frame = {};
+    can_frame.can_dlc = 2;
+    can_frame.can_id = motor_id;
+
+    can_frame.data[0] = (uint8_t)(kEncosMotorModeConfigGet << 5);
+    can_frame.data[1] = query_code;
+
+    return ReturnCode::SUCCESS;
+}
+
+ReturnCode ServoDm::parse_mit_range_reply_encos_servo(const DriverCan::can_frame_t& can_frame, uint16_t motor_id,
+                                                      uint8_t query_code, float scale, float& range_min,
+                                                      float& range_max) {
+    // ACK_QUERY reply (technical document 10.5): byte 0 top 3 bits = 5 (query ack),
+    // byte 1 echoes the query code, bytes 2..5 carry the MIN/MAX pair as
+    // big-endian int16 values in the query's fixed-point scale.
+    constexpr uint8_t kEncosAckQuery = 5;
+
+    if (can_frame.can_id != motor_id || can_frame.can_dlc < 6) {
+        return ReturnCode::FAIL;
+    }
+    if ((uint8_t)(can_frame.data[0] >> 5) != kEncosAckQuery || can_frame.data[1] != query_code) {
+        return ReturnCode::FAIL;
+    }
+    const int16_t raw_min = (int16_t)(((uint16_t)can_frame.data[2] << 8) | (uint16_t)can_frame.data[3]);
+    const int16_t raw_max = (int16_t)(((uint16_t)can_frame.data[4] << 8) | (uint16_t)can_frame.data[5]);
+    range_min = (float)raw_min * scale;
+    range_max = (float)raw_max * scale;
+    return ReturnCode::SUCCESS;
+}
+
+bool ServoDm::get_mit_codec_report(MitCodecReport& report) const {
+    const ServoDmParam* p_param = (const ServoDmParam*)p_servo_param_;
+    if (p_param == nullptr) {
+        return false;
+    }
+    report.codec_vel_min = p_param->vel_min_;
+    report.codec_vel_max = p_param->vel_max_;
+    report.codec_tor_min = p_param->tor_min_;
+    report.codec_tor_max = p_param->tor_max_;
+    report.reported_spd_valid = reported_spd_range_valid_;
+    report.reported_spd_min = reported_spd_min_;
+    report.reported_spd_max = reported_spd_max_;
+    report.reported_tor_valid = reported_tor_range_valid_;
+    report.reported_tor_min = reported_tor_min_;
+    report.reported_tor_max = reported_tor_max_;
+    report.pos_kp = get_effective_pos_kp();
+    report.pos_kd = pos_kd_;
+    return true;
+}
+
+ReturnCode ServoDm::adopt_encos_mit_range(uint8_t query_code, float range_min, float range_max) {
+    const ServoDmParam* p_current = (const ServoDmParam*)p_servo_param_;
+    if (p_current == nullptr) {
+        PI_ERROR("Servo ID %d: cannot adopt ENCOS MIT range before init_config_model", id_);
+        return ReturnCode::NOT_INITIALIZED;
+    }
+    if (!(range_min < range_max)) {
+        PI_ERROR("Servo ID %d: rejected ENCOS MIT range [%.2f, %.2f] for query code %u (min >= max)", id_, range_min,
+                 range_max, query_code);
+        return ReturnCode::FAIL;
+    }
+
+    float current_min = 0.0f;
+    float current_max = 0.0f;
+    const char* label = nullptr;
+    const char* unit = nullptr;
+    switch (query_code) {
+        case ENCOS_QUERY_SPD_RANGE:
+            current_min = p_current->vel_min_;
+            current_max = p_current->vel_max_;
+            label = "SPD";
+            unit = "rad/s";
+            break;
+        case ENCOS_QUERY_TOR_RANGE:
+            current_min = p_current->tor_min_;
+            current_max = p_current->tor_max_;
+            label = "TOR";
+            unit = "Nm";
+            break;
+        default:
+            PI_ERROR("Servo ID %d: unsupported ENCOS MIT-range query code %u", id_, query_code);
+            return ReturnCode::INVALID_PARAM;
+    }
+
+    // Keep the reported firmware range verbatim (even when the compiled codec is
+    // retained below): the client servo-parameter report compares these across
+    // arms to detect mixed motor batches (e.g. ENCOS TOR registers of 30 vs 42 Nm).
+    if (query_code == ENCOS_QUERY_SPD_RANGE) {
+        reported_spd_range_valid_ = true;
+        reported_spd_min_ = range_min;
+        reported_spd_max_ = range_max;
+    } else {
+        reported_tor_range_valid_ = true;
+        reported_tor_min_ = range_min;
+        reported_tor_max_ = range_max;
+    }
+
+    constexpr float kRangeMatchEpsilon = 1e-3f;
+    if (fabs(range_min - current_min) <= kRangeMatchEpsilon && fabs(range_max - current_max) <= kRangeMatchEpsilon) {
+        PI_INFO("Servo", InfoLevel::ESSENTIAL_0,
+                "Servo ID %d: ENCOS MIT %s range [%.1f, %.1f] %s matches the compiled codec default", id_, label,
+                range_min, range_max, unit);
+        return ReturnCode::SUCCESS;
+    }
+
+    if (query_code == ENCOS_QUERY_TOR_RANGE) {
+        // Verify-and-log only: delivered-torque conformance testing showed the
+        // physical torque full scale does not follow the firmware register (the ENCOS
+        // A4310 delivers over +-42 Nm while reporting +-30), and the model JSON
+        // torq_rescale factors are calibrated against the compiled codec, so
+        // adopting the register would silently shift gravity feed-forward
+        // delivery.
+        PI_ERROR("Servo ID %d: ENCOS MIT TOR range [%.1f, %.1f] Nm DIFFERS from the compiled default [%.1f, %.1f]; "
+                 "keeping the compiled codec (model torq_rescale is conformance-calibrated against it)",
+                 id_, range_min, range_max, current_min, current_max);
+        return ReturnCode::SUCCESS;
+    }
+
+    if (!encos_param_override_.has_value()) {
+        encos_param_override_ = *p_current;
+    }
+    encos_param_override_->vel_min_ = range_min;
+    encos_param_override_->vel_max_ = range_max;
+    p_servo_param_ = &encos_param_override_.value();
+    PI_INFO("Servo", InfoLevel::ESSENTIAL_0,
+            "Servo ID %d: ENCOS MIT %s range [%.1f, %.1f] %s DIFFERS from the compiled default [%.1f, %.1f]; "
+            "codec rescaled to the motor's reported range",
+            id_, label, range_min, range_max, unit, current_min, current_max);
+    return ReturnCode::SUCCESS;
+}
+
 ReturnCode ServoDm::parse_can_timeout_reply_encos_servo(const DriverCan::can_frame_t& can_frame, uint16_t motor_id,
                                                         uint16_t& timeout_ms) {
     // ACK_QUERY reply: byte 0 top 3 bits = 5 (query ack), byte 1 echoes the query code
@@ -877,14 +1030,14 @@ ReturnCode ServoDm::read_hardware_values() {
     // hold, so SAFE_MODE_SIG never fired in steady state.
     //
     // Threshold selection:
-    //   ARX_STALE_FRAME_AGE_INITIAL_MS while ``motor_moved_`` is false (the
+    //   CAN_MIT_STALE_FRAME_AGE_INITIAL_MS while ``motor_moved_`` is false (the
     //     servo has not yet produced any status frame for this session --
     //     bus may still be coming up after enable handshake)
-    //   ARX_STALE_FRAME_AGE_NORMAL_MS once any frame has been seen
+    //   CAN_MIT_STALE_FRAME_AGE_NORMAL_MS once any frame has been seen
     //     (steady-state operation; tighter so a real cable break is
     //     detected within ~10 s rather than ~50 s)
     //
-    // Constants live in pi_control.hpp so the DriverArx group_read path and
+    // Constants live in pi_control.hpp so the DriverCanMit group_read path and
     // this per-servo path agree on the threshold.
     prof_time_t last_update_perf;
     if (p_driver_can_ != nullptr) {
@@ -892,8 +1045,8 @@ ReturnCode ServoDm::read_hardware_values() {
     }
     const bool last_update_is_zero = Profile::is_zero(last_update_perf);
     const prof_time_msec_t threshold_ms = motor_moved_
-        ? static_cast<prof_time_msec_t>(ARX_STALE_FRAME_AGE_NORMAL_MS)
-        : static_cast<prof_time_msec_t>(ARX_STALE_FRAME_AGE_INITIAL_MS);
+        ? static_cast<prof_time_msec_t>(CAN_MIT_STALE_FRAME_AGE_NORMAL_MS)
+        : static_cast<prof_time_msec_t>(CAN_MIT_STALE_FRAME_AGE_INITIAL_MS);
     bool stale = false;
     prof_time_msec_t age_ms = 0;
     if (last_update_is_zero) {

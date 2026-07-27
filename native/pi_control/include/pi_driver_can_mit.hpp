@@ -1,6 +1,6 @@
 /*!
- * @file pi_driver_arx.hpp
- * @brief DriverArx class for ARX device communication via CAN interface.
+ * @file pi_driver_can_mit.hpp
+ * @brief DriverCanMit class for MIT-mode CAN device communication.
  */
 
 #pragma once
@@ -26,7 +26,7 @@ class ServoDm;
  * ``ServoCanPassiveEncoder::parse_encoder_status``). A default-constructed
  * value (detect via ``Profile::is_zero``) means no frame has ever been
  * parsed for this slot. The control loop reads this via
- * ``DriverArx::get_last_update_perf`` to detect a CAN-dead servo
+ * ``DriverCanMit::get_last_update_perf`` to detect a CAN-dead servo
  * regardless of the cached pos / vel / tor magnitude.
  */
 class ReceivedServoData {
@@ -58,21 +58,21 @@ class PassiveEncoderRoute {
 };
 
 /*!
- * @brief Driver implementation for ARX devices using CAN bus communication.
+ * @brief Driver implementation for MIT-mode CAN devices.
  */
-class DriverArx : public DriverCan {
+class DriverCanMit : public DriverCan {
    public:
     /*!
      * @brief Constructor.
      * @param p_device Pointer to the Device instance.
      * @param cla Command-line arguments.
      */
-    explicit DriverArx(Device* p_device, const CommandLineArgs& cla);
+    explicit DriverCanMit(Device* p_device, const CommandLineArgs& cla);
 
     /*!
      * @brief Destructor.
      */
-    ~DriverArx();
+    ~DriverCanMit();
 
     /*!
      * @brief Opens the CAN control port and starts message reception.
@@ -98,12 +98,12 @@ class DriverArx : public DriverCan {
      * @brief Frame-age based bulk read.
      *
      * Unlike DXL where ``group_read_hardware_values()`` actually probes the
-     * bus, the ARX/CAN path receives status frames asynchronously on a
-     * background thread (see ``DriverArx::handle_received_message``). This
+     * bus, the MIT CAN path receives status frames asynchronously on a
+     * background thread (see ``DriverCanMit::handle_received_message``). This
      * override therefore scans the cached ``last_update_perf_`` of every
      * servo bound to this driver: if any servo's most recent frame is older
-     * than the threshold (`ARX_STALE_FRAME_AGE_NORMAL_MS` once any motor has
-     * responded at least once, `ARX_STALE_FRAME_AGE_INITIAL_MS` until then),
+     * than the threshold (`CAN_MIT_STALE_FRAME_AGE_NORMAL_MS` once any motor has
+     * responded at least once, `CAN_MIT_STALE_FRAME_AGE_INITIAL_MS` until then),
      * the servo is inserted into ``dead_servo_ids_``,
      * ``last_failed_servo_id_`` is updated to the lowest stale id, and
      * ``FAIL`` is returned. ``DeviceArm::read_hardware_values`` /
@@ -329,6 +329,18 @@ class DriverArx : public DriverCan {
      */
     void drain_startup_frames();
 
+    /*!
+     * @brief Queries one ENCOS servo's MIT SPD/TOR codec ranges and adopts them.
+     *
+     * The wire ranges are per-motor firmware parameters (technical document
+     * 9.2.6/9.2.7), so the compiled defaults can mis-scale torque commands and
+     * feedback by the ratio of the actual range to the assumed one. Runs inside
+     * the arm_comm_loss_protection() pass (reception stopped, transaction lock
+     * held) so replies are drained synchronously. A failed query keeps the
+     * compiled default and logs loudly; it is non-fatal.
+     */
+    void query_and_adopt_encos_mit_ranges(int id);
+
    protected:
     /*!
      * @brief Callback function to handle received CAN messages from servos.
@@ -394,8 +406,8 @@ class DriverArx : public DriverCan {
     /*!
      * @brief Latched flag: ``true`` once any servo on this driver has
      *        produced at least one parsed status frame. Picks between
-     *        ``ARX_STALE_FRAME_AGE_INITIAL_MS`` (start-up, longer tolerance)
-     *        and ``ARX_STALE_FRAME_AGE_NORMAL_MS`` (steady state, tighter
+     *        ``CAN_MIT_STALE_FRAME_AGE_INITIAL_MS`` (start-up, longer tolerance)
+     *        and ``CAN_MIT_STALE_FRAME_AGE_NORMAL_MS`` (steady state, tighter
      *        tolerance) inside ``group_read_hardware_values()``.
      */
     bool any_motor_moved_ = false;

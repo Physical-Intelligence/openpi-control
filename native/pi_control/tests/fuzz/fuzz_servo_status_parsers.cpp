@@ -24,7 +24,7 @@
 #include <cstring>
 
 #include "pi_device.hpp"
-#include "pi_driver_arx.hpp"
+#include "pi_driver_can_mit.hpp"
 #include "pi_servo_dm.hpp"
 
 namespace {
@@ -73,7 +73,7 @@ struct FuzzRig {
     ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -10.0f, 10.0f, -28.0f, 28.0f,
                        0.2f, 0.3f, 0.1f};
     FuzzDevice device{cla};
-    DriverArx driver{&device, cla};
+    DriverCanMit driver{&device, cla};
     std::vector<FuzzServo*> servos;
 
     FuzzRig() {
@@ -113,8 +113,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     // iteration to keep the redzone state clean.
     auto* cache = new ReceivedServoData[MAX_SERVO_INFO_BUF_SIZE]();
 
-    (void)ServoDm::parse_dm_servo_status(&frame, cache, &DriverArx::find_data_index, &rig->driver);
-    (void)ServoDm::parser_encos_servo_status(&frame, cache, &DriverArx::find_data_index);
+    (void)ServoDm::parse_dm_servo_status(&frame, cache, &DriverCanMit::find_data_index, &rig->driver);
+    (void)ServoDm::parser_encos_servo_status(&frame, cache, &DriverCanMit::find_data_index);
 
     delete[] cache;
     return 0;

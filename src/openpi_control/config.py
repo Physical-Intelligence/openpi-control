@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import re
 from dataclasses import dataclass
 from importlib.resources import files
@@ -206,11 +207,19 @@ class ArmConfig:
     # device init (observed on physical YAM followers), so the default leaves
     # cold starts room to finish.
     connect_timeout_s: float = 120.0
-    # Followers only: use synchronized velocity-limited position tracking with
-    # model-based gravity feedforward and configured motor-side damping (native
-    # slew_pos_gravity planning on the arm device; the attached effector keeps
-    # its own planner). Requires the arm model to ship a gravity algo.
-    follower_gravity_compensation: bool = False
+    # Followers only: model-based gravity feedforward torque (plus configured
+    # motor-side damping) sent with every position command, independent of the
+    # planning type. None leaves the decision to the follower_gravity_compensation
+    # field of the arm's individual config JSON; an explicit True/False overrides
+    # it. MIT CAN arms need a URDF-backed gravity algo (the native node fails
+    # fast otherwise); controller arms (Trossen) satisfy the flag via the vendor
+    # controller's built-in compensation; serial arms reject an explicit True.
+    follower_gravity_compensation: bool | None = None
+    # Per-joint gravity-delivery calibration override (one value per arm joint).
+    # None keeps the model/instance config values; a sequence is passed to the
+    # native node and beats both configs (devices.toml [arms]
+    # follower_torq_rescale / leader_torq_rescale, per the arm's role).
+    torq_rescale: tuple[float, ...] | None = None
     # Leaders only: model-based gravity feedforward torque. Defaults on for
     # YAM, off for every other model unless explicitly enabled by the caller.
     leader_gravity_compensation: bool | None = None
@@ -243,6 +252,14 @@ class ArmConfig:
             raise ConfigurationError("leader_gravity_compensation must be a boolean")
         if not isinstance(self.safety_torque_mode, bool):
             raise ConfigurationError("safety_torque_mode must be a boolean")
+        if self.torq_rescale is not None:
+            values = tuple(float(value) for value in self.torq_rescale)
+            if not values or any(not math.isfinite(value) or value < 0.0 for value in values):
+                raise ConfigurationError(
+                    "torq_rescale must be a non-empty sequence of nonnegative finite floats "
+                    "(one value per arm joint)"
+                )
+            object.__setattr__(self, "torq_rescale", values)
         for field_name in ("instance_config", "effector_instance_config", "urdf"):
             value = getattr(self, field_name)
             if value is not None:

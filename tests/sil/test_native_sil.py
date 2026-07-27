@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -242,7 +243,10 @@ def test_killed_node_surfaces_as_native_process_error(fake_bus, session_factory)
                 time.sleep(0.1)
 
 
-def test_native_node_gracefully_stops_when_python_parent_dies(fake_bus, tmp_path):
+def test_native_node_gracefully_stops_when_python_parent_dies(
+    fake_bus: Any,
+    tmp_path: Path,
+) -> None:
     """Exercise the real inherited-FD lifeline across an abrupt Python exit."""
     native_pid_file = tmp_path / "native-pid"
     client_script = """
@@ -678,13 +682,14 @@ def test_gripper_motor_side_control_is_fast_and_force_bounded(fake_bus_with_grip
 
 
 def test_follower_gravity_compensation_feeds_torque(fake_bus):
-    # With follower_gravity_compensation enabled, the arm device switches to
-    # slew_pos_gravity planning: every follower position command carries a
-    # model-based (pinocchio RNEA over Yam.urdf) gravity feedforward torque plus
-    # MonoPi-style viscous damping on joints 1-3. Park the fake arm bent so the
-    # pitch joints are gravity-loaded, then assert the MIT command frames carry
-    # torque on the loaded elbow and that position tracking still works through
-    # the synchronized velocity slew limiter.
+    # With follower_gravity_compensation enabled (independent of the planning
+    # type), every follower position command carries a model-based (pinocchio
+    # RNEA over Yam.urdf) gravity feedforward torque plus viscous
+    # damping on joints 1-3, all scaled by the leader-validated per-joint
+    # torq_rescale. Park the fake arm bent so the pitch joints are
+    # gravity-loaded, then assert the MIT command frames carry torque on the
+    # loaded elbow and that position tracking still works through the
+    # synchronized velocity slew limiter.
     from openpi_control import ArmConfig, ArmSession, PositionCommand, SocketCanConnection
 
     for motor_id in (2, 3):
@@ -715,8 +720,10 @@ def test_follower_gravity_compensation_feeds_torque(fake_bus):
         joint4_baseline = fake_bus.last_torque(4)
         fake_bus.set_reported_velocity(1, 1.0)
         fake_bus.set_reported_velocity(4, 1.0)
+        # Wire torque = follow_viscous_damping (0.7777778) x torq_rescale (1.1),
+        # the same per-joint rescale the leader gravity paths apply.
         wait_for(
-            lambda: abs((fake_bus.last_torque(1) - joint1_baseline) + 0.7777778) < 0.1,
+            lambda: abs((fake_bus.last_torque(1) - joint1_baseline) + 0.8555556) < 0.1,
             timeout_s=5.0,
             what="joint-1 viscous damping to oppose measured velocity",
         )
@@ -1392,7 +1399,7 @@ def test_over_torque_warns_once_and_continues_by_default(fake_bus, session_facto
         session.connect()
         follower.read_state(timeout_s=10.0)
 
-        fake_bus.set_reported_torque(2, 12.0)  # joint 2 torq_max is 10 Nm
+        fake_bus.set_reported_torque(2, 27.5)  # joint 2 torq_max is 27 Nm
         warning = "Torque safe mode disabled: sustained measured torque exceeds limit"
 
         def warning_count() -> int:
@@ -1411,7 +1418,7 @@ def test_over_torque_warns_once_and_continues_by_default(fake_bus, session_facto
         assert "launch with --safety_torque_mode" in warning_lines[0]
         assert "servo ID 2" in warning_lines[0]
         assert "current=" in warning_lines[0]
-        assert "torq_max=10.000 Nm" in warning_lines[0]
+        assert "torq_max=27.000 Nm" in warning_lines[0]
         assert "Protective stop: Torque limit exceeded" not in log
 
         target = [0.2, 0.25, 0.3, 0.0, 0.1, -0.1]
@@ -1430,7 +1437,7 @@ def test_over_torque_warns_once_and_continues_by_default(fake_bus, session_facto
             timeout_s=60.0,
             what="over-torque warning hysteresis to re-arm",
         )
-        fake_bus.set_reported_torque(2, 12.0)
+        fake_bus.set_reported_torque(2, 27.5)
         wait_for(lambda: warning_count() == 2, timeout_s=90.0, what="re-armed over-torque warning")
         assert process.poll() is None
         fake_bus.set_reported_torque(2, 0.0)
@@ -1476,7 +1483,7 @@ def test_over_torque_on_middle_joint_escalates_to_protective_stop(fake_bus, sess
         session.connect()
         follower.read_state(timeout_s=10.0)
 
-        fake_bus.set_reported_torque(2, 12.0)  # joint 2 torq_max is 10 Nm
+        fake_bus.set_reported_torque(2, 27.5)  # joint 2 torq_max is 27 Nm
 
         def protective_stop_logged() -> bool:
             log = "".join(follower._backend._log_lines)  # noqa: SLF001
@@ -1557,7 +1564,7 @@ def test_leader_recovery_goes_silent_instead_of_steering_the_follower(fake_bus_w
         session.connect()
         leader.read_state(timeout_s=10.0)
 
-        bus.set_reported_torque(2, 12.0)
+        bus.set_reported_torque(2, 27.5)
 
         def gate_logged() -> bool:
             return "leader observation publishing gated" in "".join(

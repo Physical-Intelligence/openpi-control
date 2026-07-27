@@ -4,6 +4,7 @@
  */
 #pragma once
 #include <string>
+#include <vector>
 
 #define OPT_ROLE                                  "role"              ///< Device role option.
 #define OPT_ROLE_LEADER                           "leader"            ///< Leader role value.
@@ -56,7 +57,9 @@
 #define OPT_DEFAULT_NONE                          "None"             ///< Default "none" value.
 #define OPT_PLANING_TYPE                          "planning_type"    ///< Planning type option.
 #define OPT_PLANING_TYPE_DEFAULT                  "config"           ///< Default planning type value.
-#define OPT_ARM_PLANNING_TYPE                     "arm_planning_type"  ///< Planning type override applied to ARM devices only.
+#define OPT_FOLLOWER_GRAVITY_COMPENSATION         "follower_gravity_compensation"  ///< Follower gravity feed-forward override (config/true/false).
+#define OPT_FOLLOWER_GRAVITY_COMPENSATION_DEFAULT "config"           ///< Default: the arm's individual config JSON decides.
+#define OPT_TORQ_RESCALE                          "torq_rescale"     ///< Per-joint torq_rescale override (comma-separated floats).
 #define OPT_FORCE_FEEDBACK                        "force_feedback"   ///< Force feedback option.
 #define OPT_TOPIC_STATE                           "topic_state"
 #define OPT_TOPIC_LIVE_COMMAND                    "topic_live_command"
@@ -129,7 +132,14 @@ class CommandLineArgs {
     bool safety_feature_off;              ///< Disable safety features flag.
     bool safety_torque_mode = false;       ///< Enable sustained measured-torque protective stops.
     std::string planning_type;            ///< Planning type.
-    std::string arm_planning_type;        ///< Planning type override for ARM devices only (empty/None = model config).
+    ///< Follower gravity feed-forward override: "config" leaves the decision to the
+    ///< follower_gravity_compensation field of the arm's individual config JSON;
+    ///< "true"/"false" (from devices.toml) force it regardless of the JSON value.
+    std::string follower_gravity_compensation_override = OPT_FOLLOWER_GRAVITY_COMPENSATION_DEFAULT;
+    ///< Per-joint torq_rescale override (from the devices.toml [arms] torq_rescale
+    ///< array). Empty when unset; otherwise one value per arm joint, applied after
+    ///< the model and individual configs (highest precedence).
+    std::vector<float> torq_rescale_override;
     float force_feedback;                 ///< Force feedback parameter.
     std::string topic_state;
     std::string topic_live_command;
@@ -156,6 +166,14 @@ class CommandLineArgs {
      * @param argv Argument values.
      */
     CommandLineArgs(int argc, char** argv);
+
+    /*!
+     * @brief Parses a comma-separated torq_rescale override list.
+     *
+     * @param csv Comma-separated floats, e.g. "0.8,0.8,0.8,1.5,1.5,1.5".
+     * @return One value per joint; empty when any token is not a nonnegative finite float.
+     */
+    static std::vector<float> parse_torq_rescale_csv(const std::string& csv);
 
     // Default constructor.
     CommandLineArgs() = default;

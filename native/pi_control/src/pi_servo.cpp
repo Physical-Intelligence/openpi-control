@@ -141,7 +141,22 @@ ReturnCode Servo::init_config_model(const json& servo_config,
         }
     }
 
-    // Config format 1.1.1 places the position limits in the model configuration
+    // Sign-agnostic position reads for read-only encoders whose feedback sign
+    // varies per unit (e.g. the ARX_ENC gripper: the vendor reference applies
+    // abs() so left/right gripper hardware read identically). Optional field;
+    // when present, a malformed value aborts startup.
+    if (servo_config.contains(p_config->fn_servo_abs_position)) {
+        return_code = p_config->get_field_value(
+            servo_config, p_config->fn_servo_abs_position, abs_position_);
+        if (return_code != ReturnCode::SUCCESS) {
+            PI_ERROR("Servo ID %d: abs_position must be a boolean in the model configuration file", id_);
+            return return_code;
+        }
+        PI_INFO("Servo", InfoLevel::HELPFUL_1, "Servo ID %d: abs_position=%s (from model config)",
+                id_, abs_position_ ? "true" : "false");
+    }
+
+    // Config format 1.1.1+ places the position limits in the model configuration
     // servo block; the individual configuration may still override them below.
     return_code = p_config->get_field_value(
         servo_config, p_config->fn_servo_pos_min, pos_min_rel_);
@@ -202,6 +217,37 @@ ReturnCode Servo::init_config_individual(const json& servo_config,
                     id_, dir_invert_, dir_invert_individual);
         }
         dir_invert_ = dir_invert_individual;
+    }
+
+    // Position-gain overrides: an instance config can select a site-specific
+    // gain profile (e.g. the high-gain kp/kd variant for A/B benchmarking)
+    // without editing the gains bundled in the model config.
+    float gain_override = 0;
+    return_code = p_config->get_field_value(
+        servo_config, p_config->fn_servo_pos_kp, gain_override);
+    if (return_code == ReturnCode::SUCCESS) {
+        PI_INFO("Servo", InfoLevel::ESSENTIAL_0,
+                "Servo ID %d: pos_kp overridden by individual config: %.3f -> %.3f",
+                id_, pos_kp_, gain_override);
+        pos_kp_ = gain_override;
+    }
+
+    return_code = p_config->get_field_value(
+        servo_config, p_config->fn_servo_pos_ki, gain_override);
+    if (return_code == ReturnCode::SUCCESS) {
+        PI_INFO("Servo", InfoLevel::ESSENTIAL_0,
+                "Servo ID %d: pos_ki overridden by individual config: %.3f -> %.3f",
+                id_, pos_ki_, gain_override);
+        pos_ki_ = gain_override;
+    }
+
+    return_code = p_config->get_field_value(
+        servo_config, p_config->fn_servo_pos_kd, gain_override);
+    if (return_code == ReturnCode::SUCCESS) {
+        PI_INFO("Servo", InfoLevel::ESSENTIAL_0,
+                "Servo ID %d: pos_kd overridden by individual config: %.3f -> %.3f",
+                id_, pos_kd_, gain_override);
+        pos_kd_ = gain_override;
     }
 
     return_code = p_config->get_field_value(

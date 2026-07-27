@@ -11,7 +11,7 @@
 #include "pi_driver_arx_encoder.hpp"
 #include "pi_info.hpp"
 
-DriverArxEncoder::DriverArxEncoder(Device* p_device, const CommandLineArgs& cla) : DriverArx(p_device, cla) {}
+DriverArxEncoder::DriverArxEncoder(Device* p_device, const CommandLineArgs& cla) : DriverCanMit(p_device, cla) {}
 
 DriverArxEncoder::~DriverArxEncoder() {}
 

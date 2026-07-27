@@ -49,7 +49,7 @@ static const ServoParam g_servo_can_passive_encoder_param(DEFAULT_TOLERABLE_POS_
 
 ServoCanPassiveEncoder::ServoCanPassiveEncoder(Device* p_device, Joint* p_joint, Driver* p_driver)
     : Servo(p_device, p_joint, p_driver) {
-    p_driver_can_ = dynamic_cast<DriverArx*>(p_driver);
+    p_driver_can_ = dynamic_cast<DriverCanMit*>(p_driver);
 }
 
 ServoCanPassiveEncoder::~ServoCanPassiveEncoder() {}
@@ -139,7 +139,7 @@ ReturnCode ServoCanPassiveEncoder::start_hardware() {
     }
 
     // Presence probe using the same single-outstanding/deadline/backoff rules
-    // as normal reads. DriverArx has already validated the encoder before
+    // as normal reads. DriverCanMit has already validated the encoder before
     // motor enable; this proves that report polling also works after reception
     // starts.
     const auto startup_deadline = Clock::now() + PASSIVE_ENCODER_START_TIMEOUT;
@@ -343,7 +343,7 @@ ReturnCode ServoCanPassiveEncoder::parse_encoder_status(const DriverCan::can_fra
     slot.digital_inputs_ = p_data[5];
     slot.update_count_++;
     // Stamp bus liveness for the staleness watchdog
-    // (DriverArx::group_read_hardware_values / ServoDm::read_hardware_values).
+    // (DriverCanMit::group_read_hardware_values / ServoDm::read_hardware_values).
     slot.last_update_perf_ = Profile::get_time_now();
 
     return ReturnCode::SUCCESS;

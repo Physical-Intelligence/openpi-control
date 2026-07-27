@@ -249,7 +249,7 @@ class FakeDmServoBus:
 
         Real DM servos accelerate under torque-only MIT frames; kp-gated
         teleporting cannot represent that, so torque-mode consumers (the
-        monopi-style gripper spring) opt their motor into ``pos += torque *
+        gripper torque spring) opt their motor into ``pos += torque *
         gain`` per command frame. Stuck motors stay stuck (a blocked gripper).
         """
         with self._lock:

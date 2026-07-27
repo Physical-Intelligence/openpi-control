@@ -1,21 +1,21 @@
 /*!
- * @file pi_device_arm_nello.cpp
- * @brief Implementation of the DeviceArmNello class for Nello robotic arm device control.
+ * @file pi_device_arm_serial.cpp
+ * @brief Implementation of the DeviceArmSerial class for serial bus-servo arm device control.
  */
 
 #include <unistd.h>
 
-#include "pi_device_arm_nello.hpp"
+#include "pi_device_arm_serial.hpp"
 #include "pi_joint.hpp"
 #include "pi_profile.hpp"
 
-DeviceArmNello::DeviceArmNello(const CommandLineArgs& cla) : DeviceArm(cla) {}
+DeviceArmSerial::DeviceArmSerial(const CommandLineArgs& cla) : DeviceArm(cla) {}
 
-DeviceArmNello::~DeviceArmNello() {}
+DeviceArmSerial::~DeviceArmSerial() {}
 
-ReturnCode DeviceArmNello::set_control_mode(Role target_role, ControlModeIntent intent) {
+ReturnCode DeviceArmSerial::set_control_mode(Role target_role, ControlModeIntent intent) {
     // Implementation note:
-    // - Nello leader/follower switching is already expressed via Joint::change_control_mode_for_{leader,follower}(),
+    // - Serial-arm leader/follower switching is already expressed via Joint::change_control_mode_for_{leader,follower}(),
     //   which maps to servo/driver operation modes.
     // - For READY_MOVE_OVERRIDE we still treat it as follower-like (position-based) so that move_to_ready_position()
     //   can safely send position targets from the current pose.
@@ -42,9 +42,9 @@ ReturnCode DeviceArmNello::set_control_mode(Role target_role, ControlModeIntent 
     // The effector's own step switches its mode once at its ready transition, but that single
     // attempt can fail -- the passive-leader torque disable races the final ready-move writes
     // on SO-ARM101 -- so re-applying here at arm-ready gives it a second, later chance. The
-    // call is idempotent. The follower-like branch above intentionally does not chain: Nello
+    // call is idempotent. The follower-like branch above intentionally does not chain: the serial arm
     // follower effector modes depend on the configured effector control type and are handled
-    // by the effector's own ready transition, matching the long-standing Nello behavior.
+    // by the effector's own ready transition, matching the long-standing serial-arm behavior.
     // Skipped during emergency recovery for the same bus-timeout reason as the base class.
     if (p_effector_ && !is_in_emergency_recovery()) {
         rc = p_effector_->set_control_mode(p_effector_->get_device_role(), intent);
@@ -54,12 +54,12 @@ ReturnCode DeviceArmNello::set_control_mode(Role target_role, ControlModeIntent 
     return ReturnCode::SUCCESS;
 }
 
-ReturnCode DeviceArmNello::move_to_ready_position() {
+ReturnCode DeviceArmSerial::move_to_ready_position() {
     ReturnCode return_code = ReturnCode::SUCCESS;
 
     return_code = DeviceArm::move_to_ready_position();
     if (return_code != ReturnCode::SUCCESS) {
-        PI_ERROR("Failed to move Nello arm to ready position");
+        PI_ERROR("Failed to move serial arm to ready position");
         return return_code;
     }
 

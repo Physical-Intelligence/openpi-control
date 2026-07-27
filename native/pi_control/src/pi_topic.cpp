@@ -180,6 +180,15 @@ ReturnCode Topic::process_leader_msg(const MsgCommand& msg) {
 
     } else if (msg.command_ == DEVICE_COMMAND_ENTER_GRAVITY_COMPENSATION) {
         if (p_device_ == nullptr) return ReturnCode::NOT_INITIALIZED;
+        if (p_device_->get_device_role() == Role::FOLLOWER) {
+            // Calibration gravity float (gravity_tune / arm_check float runs on
+            // a follower node): position control drops to the gravity
+            // feed-forward alone; HOLD re-engages it. The optional float param
+            // is the in-loop runaway abort threshold (rad).
+            const float abort_drift_rad = msg.num_param_float_ > 0 ? msg.param_float_[0]
+                                                                   : Device::kGravityFloatAbortRadDefault;
+            return p_device_->set_runtime_gravity_float(true, abort_drift_rad);
+        }
         return p_device_->set_runtime_force_feedback(false, -1.0f);
 
     } else if (msg.command_ == DEVICE_COMMAND_ENABLE_FORCE_FEEDBACK) {
@@ -195,6 +204,17 @@ ReturnCode Topic::process_leader_msg(const MsgCommand& msg) {
     } else if (msg.command_ == DEVICE_COMMAND_HOLD) {
         if (p_device_ == nullptr) return ReturnCode::NOT_INITIALIZED;
         return p_device_->runtime_hold();
+
+    } else if (msg.command_ == DEVICE_COMMAND_SET_TORQ_RESCALE) {
+        if (p_device_ == nullptr) return ReturnCode::NOT_INITIALIZED;
+        if (msg.num_param_float_ < 1 || msg.num_param_float_ > (int)msg.param_float_.size()) {
+            PI_ERROR("Invalid parameter count for the runtime torq_rescale command: received=%d",
+                     msg.num_param_float_);
+            return ReturnCode::INVALID_PARAM;
+        }
+        const std::vector<float> values(msg.param_float_.begin(),
+                                        msg.param_float_.begin() + msg.num_param_float_);
+        return p_device_->set_runtime_torq_rescale(values);
 
     } else if (msg.command_ == DEVICE_COMMAND_SET_EFFECTOR_MIN_MAX_POS) {
         int num_param_float = msg.num_param_float_;

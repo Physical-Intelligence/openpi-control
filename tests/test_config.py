@@ -131,7 +131,7 @@ def test_arx_gripper_uses_training_normalized_range() -> None:
     assert joint["servos"][0]["pos_max"] == 5.077
 
 
-def test_yam_uses_monopi_style_follower_tracking_constants() -> None:
+def test_yam_uses_reference_follower_tracking_constants() -> None:
     config = ArmConfig("follower", "Yam", SocketCanConnection("test"))
     model = json.loads(config.resolve_assets().model_config.read_text())
 
@@ -139,11 +139,14 @@ def test_yam_uses_monopi_style_follower_tracking_constants() -> None:
     assert [joint["follow_viscous_damping"] for joint in model["joints"]] == pytest.approx(
         [0.7777778, 0.7777778, 0.7777778, 0.0, 0.0, 0.0]
     )
-    assert [joint["vel_max"] for joint in model["joints"]] == [2.0] * 6
+    # Reference-controller planning envelope (00.00.80); follow_vel_max above
+    # is the operative follower speed limit.
+    assert [joint["vel_max"] for joint in model["joints"]] == [20.0] * 6
+    assert [joint["torq_max"] for joint in model["joints"]] == [27, 27, 27, 7, 7, 7]
 
 
 @pytest.mark.parametrize("model_name", ["ARX_X5", "ARX_L5"])
-def test_arx_uses_monopi_style_follower_tracking_limits(model_name: str) -> None:
+def test_arx_uses_reference_follower_tracking_limits(model_name: str) -> None:
     # ARX_X5 and ARX_L5 mirror the Yam velocity limits (X5 restored in
     # 00.00.36, L5 in 00.00.57): the 0.3 rad/s robot-test cap made follower
     # tracking far too sluggish for policy execution.
@@ -151,7 +154,119 @@ def test_arx_uses_monopi_style_follower_tracking_limits(model_name: str) -> None
     model = json.loads(config.resolve_assets().model_config.read_text())
 
     assert [joint["follow_vel_max"] for joint in model["joints"]] == [2.5, 2.6, 2.8, 6.0, 6.0, 6.0]
-    assert [joint["vel_max"] for joint in model["joints"]] == [2.0] * 6
+    # Reference-controller planning envelope and base-joint torque limits
+    # (00.00.80): X5 base joints are ENCOS A4310 (datasheet peak 36 Nm), L5
+    # base joints are DM J4340 (27 Nm inside the +-28 Nm MIT codec range);
+    # wrists stay +-7 Nm.
+    assert [joint["vel_max"] for joint in model["joints"]] == [20.0] * 6
+    base_torque = 36 if model_name == "ARX_X5" else 27
+    assert [joint["torq_max"] for joint in model["joints"]] == [base_torque] * 3 + [7] * 3
+
+
+@pytest.mark.parametrize("model_name", ["ARX_X5", "ARX_L5"])
+def test_arx_follower_position_limits_match_reference_urdf(model_name: str) -> None:
+    # Reference URDF joint bounds (00.00.83/85): the operational envelope
+    # derived from successful-episode data; commands outside are clipped
+    # natively.
+    config = ArmConfig("follower", model_name, SocketCanConnection("test"))
+    model = json.loads(config.resolve_assets().model_config.read_text())
+
+    expected = [(-2.1, 3.1), (0.0, 3.63), (0.0, 3.2), (-1.45, 1.35), (-1.58, 1.58), (-2.05, 2.05)]
+    actual = [
+        (joint["servos"][0]["pos_min"], joint["servos"][0]["pos_max"])
+        for joint in model["joints"]
+    ]
+    assert actual == expected
+
+
+@pytest.mark.parametrize("model_name", ["ARX_X5", "ARX_L5"])
+def test_arx_torque_rescale_uses_float_test_calibration(model_name: str) -> None:
+    # torq_rescale is a per-unit gravity-delivery calibration measured with the
+    # kp=0 float test / run/gravity_tune.sh on our arms: X5 base 0.803 (ENCOS
+    # reporting the factory +-30 codec, effective physical full scale
+    # ~37.5 Nm) and wrist 1.51 (DM4310, effective ~6.7 Nm). The calculated
+    # conservative values (0.714 / 1.316) ship as the active devices.toml
+    # override; these are the tuned fallbacks used when that line is
+    # commented out.
+    config = ArmConfig("follower", model_name, SocketCanConnection("test"))
+    model = json.loads(config.resolve_assets().model_config.read_text())
+
+    expected = [0.803] * 3 + [1.51] * 3 if model_name == "ARX_X5" else [1.4] * 6
+    assert [joint["torq_rescale"] for joint in model["joints"]] == expected
+
+
+@pytest.mark.parametrize("model_name", ["ARX_X5", "ARX_L5"])
+def test_arx_default_gains_are_the_gravity_assisted_baseline(model_name: str) -> None:
+    # 00.00.94: the model config ships the gravity-assisted baseline gains as
+    # the default (position gains correct tracking error; gravity feed-forward
+    # holds the arm). The stiff profile lives in <model>_high_gain_01.json.
+    config = ArmConfig("follower", model_name, SocketCanConnection("test"))
+    model = json.loads(config.resolve_assets().model_config.read_text())
+
+    gains = [
+        (joint["servos"][0]["pos_kp"], joint["servos"][0]["pos_kd"])
+        for joint in model["joints"]
+    ]
+    if model_name == "ARX_X5":
+        assert gains == [(40, 1.2), (40, 1.2), (32, 1.0), (10, 0.8), (10, 0.8), (10, 1)]
+    else:
+        assert gains == [(150, 5), (150, 5), (150, 5), (30, 0.8), (25, 0.8), (10, 1)]
+
+
+@pytest.mark.parametrize("model_name", ["ARX_X5", "ARX_L5"])
+def test_arx_bundles_high_gain_calibration_variant(model_name: str) -> None:
+    # 00.00.94: the stiff vendor-style gains are a selectable instance-config
+    # variant (one-line devices.toml toggle, no wheel rebuild).
+    config = ArmConfig("follower", model_name, SocketCanConnection("test"))
+    arm_dir = config.resolve_assets().instance_config.parent
+    variant = json.loads((arm_dir / f"{model_name}_high_gain_01.json").read_text())
+
+    gains = [
+        (joint["servos"][0]["pos_kp"], joint["servos"][0]["pos_kd"])
+        for joint in variant["joints"]
+    ]
+    if model_name == "ARX_X5":
+        assert gains == [(150, 12), (150, 12), (150, 12), (30, 0.8), (25, 0.8), (10, 1)]
+    else:
+        assert gains == [(150, 12), (150, 12), (150, 12), (30, 0.8), (30, 0.8), (30, 0.8)]
+
+
+def test_arm_config_torq_rescale_normalizes_to_floats() -> None:
+    config = ArmConfig(
+        "follower",
+        "ARX_X5",
+        SocketCanConnection("test"),
+        torq_rescale=[0.8, 0.8, 0.8, 1.5, 1.5, 1.5],
+    )
+    assert config.torq_rescale == (0.8, 0.8, 0.8, 1.5, 1.5, 1.5)
+
+
+@pytest.mark.parametrize("bad", [[], [-0.1], [float("nan")], [float("inf")]])
+def test_arm_config_rejects_non_physical_torq_rescale(bad: list[float]) -> None:
+    with pytest.raises(ConfigurationError, match="torq_rescale"):
+        ArmConfig("follower", "ARX_X5", SocketCanConnection("test"), torq_rescale=bad)
+
+
+def test_arx_gripper_uses_reference_torque_spring() -> None:
+    # Reference gripper torque-spring values: X5 stiffness 6.67 Nm/rad with
+    # 0.2 rad spring offset, saturated at +-1.11 Nm; the bundled
+    # E_ARX_l5_01.json variant carries the softer L5 spring (4.44 / 0.1).
+    config = ArmConfig("follower", "ARX_X5", SocketCanConnection("test"), effector_model="E_ARX")
+    assets = config.resolve_assets()
+    assert assets.effector_model_config is not None
+    assert assets.effector_instance_config is not None
+    model = json.loads(assets.effector_model_config.read_text())
+    instance = json.loads(assets.effector_instance_config.read_text())
+
+    assert model["joints"][0]["grip_torque_limit"] == 1.11
+    assert instance["control_mode"] == "torque"
+    assert instance["dist_to_torque_const"] == 6.67
+    assert instance["grip_spring_offset"] == 0.2
+
+    l5_variant = assets.effector_instance_config.parent / "E_ARX_l5_01.json"
+    l5 = json.loads(l5_variant.read_text())
+    assert l5["dist_to_torque_const"] == 4.44
+    assert l5["grip_spring_offset"] == 0.1
 
 
 def test_arx_model_configs_define_servo_position_limits() -> None:
