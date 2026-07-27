@@ -729,28 +729,27 @@ TEST(EncosMitRangeAdoption, AdoptsSpdButOnlyVerifiesTorAgainstTheCompiledCodec) 
     CommandLineArgs cla{};
     DriverCanMitTestDevice device(cla);
     DriverCanMit driver(&device, cla);
-    // Compiled ENCOS EC-A4310-P2-36 defaults: SPD +-18 rad/s, TOR +-30 Nm.
-    ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -18.0f, 18.0f, -30.0f, 30.0f,
+    // ENCOS EC-A4310-P2-36 codec: SPD +-18 rad/s, TOR +-42 Nm.
+    ServoDmParam param{0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -18.0f, 18.0f, -42.0f, 42.0f,
                        0.2f, 0.3f, 0.1f};
     DriverCanMitTestServoDm servo(&device, &driver, &param, 1, ServoType::ENCOS_A4310);
 
     // A matching reported range keeps the compiled parameter object.
-    EXPECT_EQ(servo.adopt_encos_mit_range(ServoDm::ENCOS_QUERY_TOR_RANGE, -30.0f, 30.0f), ReturnCode::SUCCESS);
-    EXPECT_EQ(servo.servo_param(), &param);
-
-    // A different TOR range is logged but never adopted: torq_rescale in the
-    // model JSON is conformance-calibrated against the compiled codec, so the
-    // register value must not shift the gravity feed-forward delivery.
     EXPECT_EQ(servo.adopt_encos_mit_range(ServoDm::ENCOS_QUERY_TOR_RANGE, -42.0f, 42.0f), ReturnCode::SUCCESS);
     EXPECT_EQ(servo.servo_param(), &param);
-    EXPECT_FLOAT_EQ(((const ServoDmParam*)servo.servo_param())->tor_max_, 30.0f);
+
+    // A different reported TOR range is logged but never adopted: we use
+    // the conformance-tested +-42 Nm codec even when firmware reports +-30 Nm.
+    EXPECT_EQ(servo.adopt_encos_mit_range(ServoDm::ENCOS_QUERY_TOR_RANGE, -30.0f, 30.0f), ReturnCode::SUCCESS);
+    EXPECT_EQ(servo.servo_param(), &param);
+    EXPECT_FLOAT_EQ(((const ServoDmParam*)servo.servo_param())->tor_max_, 42.0f);
 
     // A different SPD range still repoints the codec to a per-servo override.
     EXPECT_EQ(servo.adopt_encos_mit_range(ServoDm::ENCOS_QUERY_SPD_RANGE, -20.0f, 20.0f), ReturnCode::SUCCESS);
     const ServoDmParam* p_adopted = (const ServoDmParam*)servo.servo_param();
     ASSERT_NE(p_adopted, &param);
     EXPECT_FLOAT_EQ(p_adopted->vel_max_, 20.0f);
-    EXPECT_FLOAT_EQ(p_adopted->tor_max_, 30.0f);  // untouched fields keep the compiled values
+    EXPECT_FLOAT_EQ(p_adopted->tor_max_, 42.0f);  // untouched fields keep the compiled values
 
     // A nonsense range is rejected and leaves the codec unchanged.
     EXPECT_EQ(servo.adopt_encos_mit_range(ServoDm::ENCOS_QUERY_SPD_RANGE, 5.0f, -5.0f), ReturnCode::FAIL);

@@ -22,7 +22,7 @@ const ServoDmParam g_servo_dm_param_4310(0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f
                                          DEFAULT_TOLERABLE_POS_DIFFERENCE_RAD, MAX_POS_DIFFERENCE_RAD,
                                          DEFAULT_VELOCITY_THRESHOLD_RAD_SEC);
 
-const ServoDmParam g_servo_dm_param_encos_A4310(0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -18.0f, 18.0f, -30.0f, 30.0f,
+const ServoDmParam g_servo_dm_param_encos_A4310(0.0f, 500.0f, 0.0f, 5.0f, -12.5f, 12.5f, -18.0f, 18.0f, -42.0f, 42.0f,
                                                 DEFAULT_TOLERABLE_POS_DIFFERENCE_RAD, MAX_POS_DIFFERENCE_RAD,
                                                 DEFAULT_VELOCITY_THRESHOLD_RAD_SEC);
 
@@ -889,14 +889,8 @@ ReturnCode ServoDm::adopt_encos_mit_range(uint8_t query_code, float range_min, f
     }
 
     if (query_code == ENCOS_QUERY_TOR_RANGE) {
-        // Verify-and-log only: delivered-torque conformance testing showed the
-        // physical torque full scale does not follow the firmware register (the ENCOS
-        // A4310 delivers over +-42 Nm while reporting +-30), and the model JSON
-        // torq_rescale factors are calibrated against the compiled codec, so
-        // adopting the register would silently shift gravity feed-forward
-        // delivery.
         PI_ERROR("Servo ID %d: ENCOS MIT TOR range [%.1f, %.1f] Nm DIFFERS from the compiled default [%.1f, %.1f]; "
-                 "keeping the compiled codec (model torq_rescale is conformance-calibrated against it)",
+                 "keeping the compiled codec",
                  id_, range_min, range_max, current_min, current_max);
         return ReturnCode::SUCCESS;
     }

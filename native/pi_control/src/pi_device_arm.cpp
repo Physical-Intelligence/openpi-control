@@ -254,6 +254,7 @@ void DeviceArm::reset_slew_targets_to_current() {
         p_joint->adjusted_target_pos_ = current;
         p_joint->prev_target_pos_ = current;
     }
+    follower_slew_last_time_ = std::chrono::steady_clock::now();
 }
 
 ReturnCode DeviceArm::park_safely() {
@@ -1886,8 +1887,18 @@ ReturnCode DeviceArm::operate_as_follower() {
         return ReturnCode::NOT_INITIALIZED;
     }
 
+    // Integrate the slew using the actual
+    // elapsed time between control updates so an overrun does not create
+    // permanent command lag. The nominal period is only a defensive fallback
+    // if this path is reached before the slew clock has been initialized.
+    const auto slew_now = std::chrono::steady_clock::now();
+    float dt = 1.0f / static_cast<float>(control_frequency_);
+    if (follower_slew_last_time_ != std::chrono::steady_clock::time_point{}) {
+        dt = std::max(1e-9f, std::chrono::duration<float>(slew_now - follower_slew_last_time_).count());
+    }
+    follower_slew_last_time_ = slew_now;
+
     float slew_scale = 1.0f;
-    const float dt = 1.0f / static_cast<float>(control_frequency_);
     int slew_i = 0;
     for (auto& p_joint : joints_) {
         const float goal = p_joint->get_safe_tele_pos_rad();

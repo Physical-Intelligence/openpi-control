@@ -3,6 +3,7 @@
  * @brief Base class for robotic arm devices.
  */
 #pragma once
+#include <chrono>
 #include <map>
 #include <memory>
 #include <unordered_map>
@@ -266,6 +267,7 @@ class DeviceArm : public Device {
     std::vector<float> target_tor_;              ///< Pre-allocated target torque vector.
     std::vector<float> current_motor_positions_;  ///< Pre-allocated current motor positions vector.
     std::vector<float> slew_goal_positions_;      ///< Safe follower goals used to compute one synchronized slew scale.
+    std::chrono::steady_clock::time_point follower_slew_last_time_{};  ///< Previous follower slew update time.
 
     std::vector<int16_t>       joint_init_sequence_;      ///< Sequence of joint IDs for initialization.
     int16_t                    moving_joint_index_ = 0;   ///< Index of currently moving joint.

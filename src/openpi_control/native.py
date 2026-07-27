@@ -413,7 +413,7 @@ class NativeArmBackend(ArmBackend):
             "--logical_name",
             config.name,
             "--control_frequency",
-            str(config.control_frequency_hz),
+            str(role.control_frequency_hz),
             "--info_level",
             os.environ.get("OPENPI_CONTROL_INFO_LEVEL", "0"),
             "--topic_type",
@@ -653,7 +653,7 @@ class NativeArmBackend(ArmBackend):
 
     def _warn_stream_backlog(self, stream: str, discarded: int) -> None:
         name = self._config.name if self._config else "unknown"
-        hz = self._config.control_frequency_hz if self._config else 0
+        hz = self._role.control_frequency_hz if self._role is not None else 0
         stalled_s = discarded / hz if hz > 0 else 0.0
         logging.getLogger(__name__).warning(
             "%s: drained %d stale %s message(s) (~%.1f s of backlog); "

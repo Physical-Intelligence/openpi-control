@@ -180,19 +180,12 @@ def test_arx_follower_position_limits_match_reference_urdf(model_name: str) -> N
 
 
 @pytest.mark.parametrize("model_name", ["ARX_X5", "ARX_L5"])
-def test_arx_torque_rescale_uses_float_test_calibration(model_name: str) -> None:
-    # torq_rescale is a per-unit gravity-delivery calibration measured with the
-    # kp=0 float test / run/gravity_tune.sh on our arms: X5 base 0.803 (ENCOS
-    # reporting the factory +-30 codec, effective physical full scale
-    # ~37.5 Nm) and wrist 1.51 (DM4310, effective ~6.7 Nm). The calculated
-    # conservative values (0.714 / 1.316) ship as the active devices.toml
-    # override; these are the tuned fallbacks used when that line is
-    # commented out.
+def test_arx_torque_rescale_matches_controller_profile(model_name: str) -> None:
     config = ArmConfig("follower", model_name, SocketCanConnection("test"))
     model = json.loads(config.resolve_assets().model_config.read_text())
 
-    expected = [0.803] * 3 + [1.51] * 3 if model_name == "ARX_X5" else [1.4] * 6
-    assert [joint["torq_rescale"] for joint in model["joints"]] == expected
+    expected = [1.0] * 3 + [10.0 / 7.6] * 3 if model_name == "ARX_X5" else [1.4] * 6
+    assert [joint["torq_rescale"] for joint in model["joints"]] == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("model_name", ["ARX_X5", "ARX_L5"])

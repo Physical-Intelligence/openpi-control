@@ -82,7 +82,6 @@ def session_factory():
                 "Yam",
                 SocketCanConnection(VCAN),
                 effector_model=effector_model,
-                control_frequency_hz=100,
                 safety_torque_mode=safety_torque_mode,
             )
         )
@@ -125,7 +124,6 @@ def make_handle_leader(*, connect_timeout_s: float = 20.0):
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam_Handle",
-            control_frequency_hz=100,
             connect_timeout_s=connect_timeout_s,
         )
     )
@@ -262,7 +260,6 @@ follower = session.add_follower(
         "sil-parent-liveness-follower",
         "Yam",
         SocketCanConnection(sys.argv[1]),
-        control_frequency_hz=100,
     )
 )
 session.connect()
@@ -385,7 +382,6 @@ def test_gripper_polarity_and_command_round_trip(fake_bus_with_gripper):
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam",
-            control_frequency_hz=100,
         )
     )
     with session:
@@ -444,7 +440,6 @@ def test_gripper_coil_overtemperature_fails_with_actionable_error(fake_bus_with_
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam",
-            control_frequency_hz=100,
         )
     )
 
@@ -512,7 +507,6 @@ def test_live_gripper_thermal_fault_preempts_state_timeout_and_parks(
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam",
-            control_frequency_hz=100,
         )
     )
 
@@ -550,7 +544,6 @@ def test_first_effector_temperature_sample_above_force_stop_parks(fake_bus_with_
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam",
-            control_frequency_hz=100,
         )
     )
 
@@ -578,7 +571,6 @@ def test_nonthermal_gripper_hardware_fault_does_not_use_thermal_disable(fake_bus
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam",
-            control_frequency_hz=100,
         )
     )
 
@@ -615,7 +607,6 @@ def test_gripper_motor_side_control_is_fast_and_force_bounded(fake_bus_with_grip
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam",
-            control_frequency_hz=100,
         )
     )
     with session:
@@ -701,7 +692,6 @@ def test_follower_gravity_compensation_feeds_torque(fake_bus):
             "sil-follower",
             "Yam",
             SocketCanConnection(VCAN),
-            control_frequency_hz=100,
             follower_gravity_compensation=True,
         )
     )
@@ -897,7 +887,6 @@ def test_leader_handle_trigger_and_buttons(fake_bus_with_handle):
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam_Handle",
-            control_frequency_hz=100,
         )
     )
     with session:
@@ -975,7 +964,6 @@ def test_handle_encoder_transient_mute_holds_trigger(fake_bus_with_handle):
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam_Handle",
-            control_frequency_hz=100,
         )
     )
     with session:
@@ -1022,7 +1010,6 @@ def test_handle_encoder_wedge_recovers_via_firmware_restart(fake_bus_with_handle
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam_Handle",
-            control_frequency_hz=100,
         )
     )
     with session:
@@ -1068,7 +1055,6 @@ def test_leader_float_applies_gravity_torque(fake_bus_with_handle):
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam_Handle",
-            control_frequency_hz=100,
         )
     )
     with session:
@@ -1119,7 +1105,6 @@ def test_teleop_pair_engage_mirrors_joints_gripper_and_keeps_gravity():
                 "Yam",
                 SocketCanConnection(VCAN),
                 effector_model="E_Yam_Handle",
-                control_frequency_hz=100,
             )
         )
         follower = session.add_follower(
@@ -1128,7 +1113,6 @@ def test_teleop_pair_engage_mirrors_joints_gripper_and_keeps_gravity():
                 "Yam",
                 SocketCanConnection(VCAN2),
                 effector_model="E_Yam",
-                control_frequency_hz=100,
                 follower_gravity_compensation=True,
             )
         )
@@ -1343,7 +1327,6 @@ def test_out_of_range_normalized_gripper_command_clamps(fake_bus_with_gripper):
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam",
-            control_frequency_hz=100,
         )
     )
     with session:
@@ -1556,7 +1539,6 @@ def test_leader_recovery_goes_silent_instead_of_steering_the_follower(fake_bus_w
             "Yam",
             SocketCanConnection(VCAN),
             effector_model="E_Yam_Handle",
-            control_frequency_hz=100,
             safety_torque_mode=True,
         )
     )

@@ -29,6 +29,11 @@ class ArmRole(StrEnum):
     LEADER = "leader"
     FOLLOWER = "follower"
 
+    @property
+    def control_frequency_hz(self) -> int:
+        """Canonical control-loop rate for this role."""
+        return 200
+
 
 class ArmMode(StrEnum):
     DISCONNECTED = "disconnected"

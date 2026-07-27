@@ -14,11 +14,6 @@ from .exceptions import ConfigurationError
 
 _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]*$")
 
-# Native control-loop rates by role, matching robot-test's teleoperation stack:
-# leaders sample and publish live commands at 50 Hz; followers track at 200 Hz.
-LEADER_CONTROL_FREQUENCY_HZ = 50
-FOLLOWER_CONTROL_FREQUENCY_HZ = 200
-
 SUPPORTED_MODELS = (
     "ARX_ENC",
     "ARX_L5",
@@ -202,7 +197,6 @@ class ArmConfig:
     effector_model: str | None = None
     effector_instance_config: Path | None = None
     urdf: Path | None = None
-    control_frequency_hz: int = 100
     # First contact after the arm has sat idle can exceed a minute of native
     # device init (observed on physical YAM followers), so the default leaves
     # cold starts room to finish.
@@ -242,8 +236,6 @@ class ArmConfig:
                 f"unsupported effector {self.effector_model!r}; supported effectors: "
                 f"{', '.join(SUPPORTED_EFFECTORS)}"
             )
-        if self.control_frequency_hz <= 0:
-            raise ConfigurationError("control_frequency_hz must be positive")
         if self.connect_timeout_s <= 0:
             raise ConfigurationError("connect_timeout_s must be positive")
         if self.leader_gravity_compensation is None:

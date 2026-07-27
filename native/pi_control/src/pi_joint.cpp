@@ -224,9 +224,7 @@ ReturnCode Joint::init_config_individual(const json& joint_config, const DeviceC
 
     // Optional per-instance motion-limit overrides. The individual config
     // (effector_instance_config) may raise/lower the joint's velocity and
-    // acceleration limits without a separate effector model -- e.g. openpi-beta
-    // sets a faster gripper close speed in its per-arm calibration JSON. Absent
-    // fields keep the model-config value (init_config_model runs first).
+    // acceleration limits without a separate effector model.
     if (p_config->get_field_value(joint_config, p_config->fn_joint_vel_max, vel_max_) == ReturnCode::SUCCESS) {
         PI_INFO("Joint", InfoLevel::HELPFUL_1, "Joint %d: vel_max override=%.3f", id_, vel_max_);
     }

@@ -371,12 +371,10 @@ class ServoDm : public Servo {
      * per-servo override on first use so both the command builder and the
      * status parser scale against the motor's actual firmware range.
      *
-     * TOR ranges are verify-and-log only: delivered-torque conformance testing
-     * showed the physical torque full scale does not follow the firmware register
-     * (ENCOS A4310 delivers over +-42 Nm while reporting +-30), and the model
-     * JSON torq_rescale factors are calibrated against the compiled codec, so
-     * adopting the register would silently shift the gravity feed-forward
-     * delivery. A mismatch is logged loudly and the compiled codec is kept.
+     * TOR ranges are verify-and-log only: the 
+     * ENCOS codec uses +-42 Nm even when the firmware register reports +-30 Nm.
+     * Adopting the register would silently shift gravity feed-forward delivery.
+     * A mismatch is logged loudly and the compiled codec is kept.
      *
      * @param query_code ENCOS_QUERY_SPD_RANGE or ENCOS_QUERY_TOR_RANGE.
      * @param range_min Queried range minimum in physical units.

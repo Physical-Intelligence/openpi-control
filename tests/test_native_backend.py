@@ -152,7 +152,7 @@ def fake_node(tmp_path, monkeypatch):
 
 
 def make_backend_config() -> ArmConfig:
-    return ArmConfig("native-test", "Yam", SocketCanConnection("lo"), control_frequency_hz=100)
+    return ArmConfig("native-test", "Yam", SocketCanConnection("lo"))
 
 
 @pytest.mark.parametrize("safety_torque_mode", [False, True])
@@ -165,7 +165,6 @@ def test_native_backend_forwards_safety_torque_mode_only_when_enabled(
         "native-test",
         "Yam",
         SocketCanConnection("lo"),
-        control_frequency_hz=100,
         safety_torque_mode=safety_torque_mode,
     )
 
@@ -189,6 +188,8 @@ def test_native_backend_forwards_safety_torque_mode_only_when_enabled(
         backend.close()
 
     assert ("--safety_torque_mode" in captured_args) is safety_torque_mode
+    frequency_index = captured_args.index("--control_frequency")
+    assert captured_args[frequency_index + 1] == "200"
 
 
 @pytest.mark.parametrize(("model", "expected_present"), [("ARX_X5", False), ("Yam", True)])
@@ -201,7 +202,6 @@ def test_native_backend_forwards_leader_gravity_compensation_default(
         "native-test",
         model,
         SocketCanConnection("lo"),
-        control_frequency_hz=100,
     )
 
     def capture_spawn(args, **_kwargs):
@@ -224,6 +224,8 @@ def test_native_backend_forwards_leader_gravity_compensation_default(
         backend.close()
 
     assert ("--leader_gravity_compensation" in captured_args) is expected_present
+    frequency_index = captured_args.index("--control_frequency")
+    assert captured_args[frequency_index + 1] == "200"
 
 
 def test_publisher_closes_socket_when_bind_candidates_are_exhausted():
@@ -637,11 +639,11 @@ def test_session_disengages_pair_before_reconnecting_dead_arm(fake_node):
     follower_backend = NativeArmBackend()
     session = ArmSession(session_id="t-pair-exited-reconnect")
     leader = session.add_leader(
-        ArmConfig("native-leader", "Yam", SocketCanConnection("lo"), control_frequency_hz=100),
+        ArmConfig("native-leader", "Yam", SocketCanConnection("lo")),
         backend=leader_backend,
     )
     follower = session.add_follower(
-        ArmConfig("native-follower", "Yam", SocketCanConnection("lo"), control_frequency_hz=100),
+        ArmConfig("native-follower", "Yam", SocketCanConnection("lo")),
         backend=follower_backend,
     )
     pair = session.add_pair(

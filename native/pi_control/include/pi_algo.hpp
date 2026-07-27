@@ -146,7 +146,8 @@ class Algo {
 
     int calc_done_t_ = 0;  ///< Timestamp indicating when the last calculation was completed. Used for performance monitoring.
 
-    int control_frequency_ = 50;  ///< The main control loop frequency in Hz. Reinitialized in init() with config parameter.
+    /// The main control loop frequency in Hz. Set in init() from the required CLI parameter.
+    int control_frequency_ = 0;
 
     Device* p_device_ = nullptr;  ///< Pointer to the Device instance that this algorithm controls. Set during construction.
 

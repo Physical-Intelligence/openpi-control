@@ -2,8 +2,6 @@
 
 from .arms import FollowerArm, LeaderArm
 from .config import (
-    FOLLOWER_CONTROL_FREQUENCY_HZ,
-    LEADER_CONTROL_FREQUENCY_HZ,
     ArmConfig,
     EthernetConnection,
     InputLayout,
@@ -42,8 +40,6 @@ from .types import (
 )
 
 __all__ = [
-    "FOLLOWER_CONTROL_FREQUENCY_HZ",
-    "LEADER_CONTROL_FREQUENCY_HZ",
     "PiControlError",
     "AlignmentError",
     "ArmCapabilities",
