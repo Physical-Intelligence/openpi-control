@@ -25,6 +25,7 @@
                 {
                     "servo_id": 8,
                     "zero_pos": 0.019,
+                    "position_wrap_period": 6.283185307179586,
                     "home_pos": 0,
                     "spring_home_pos": 4.9
                 }
