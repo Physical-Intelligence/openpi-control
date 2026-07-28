@@ -246,6 +246,15 @@ class DeviceArm : public Device {
      */
     void reset_slew_targets_to_current();
 
+    /*!
+     * @brief Recomputes follower gravity feed-forward and viscous damping torques.
+     *
+     * Used by both normal follower tracking and move-to-ready so switching into
+     * the ready trajectory does not abruptly replace gravity-supported position
+     * commands with zero-torque position commands.
+     */
+    ReturnCode update_follower_feedforward_torques();
+
     std::vector<float> tele_pos_;  ///< Teleoperation target positions (relative radians).
     std::vector<float> tele_vel_;  ///< Teleoperation target velocities (rad/s).
     std::vector<float> tele_tor_;  ///< Teleoperation target torques (Nm).

@@ -174,6 +174,9 @@ class FakeDmServoBus:
         self._motor_disables_handled: dict[int, int] = {motor_id: 0 for motor_id in motor_ids}
         self._motor_resets_handled: dict[int, int] = {motor_id: 0 for motor_id in motor_ids}
         self._mit_commands_handled: dict[int, int] = {motor_id: 0 for motor_id in motor_ids}
+        self._command_history: dict[int, list[tuple[float, float, float, float]]] = {
+            motor_id: [] for motor_id in motor_ids
+        }
         self.events: list[str] = []
         # Motors listed here ignore MIT position targets (physically stuck) and report
         # ``position +/- jitter``, alternating sign on every status frame. A jitter above
@@ -273,6 +276,13 @@ class FakeDmServoBus:
     def mit_command_count(self, motor_id: int) -> int:
         with self._lock:
             return self._mit_commands_handled[motor_id]
+
+    def commands_since(
+        self, motor_id: int, command_count: int
+    ) -> tuple[tuple[float, float, float, float], ...]:
+        """MIT commands received after the supplied per-motor command count."""
+        with self._lock:
+            return tuple(self._command_history[motor_id][command_count:])
 
     def motor_disable_count(self, motor_id: int) -> int:
         with self._lock:
@@ -581,6 +591,7 @@ class FakeDmServoBus:
             self._mit_commands_handled[motor_id] += 1
             self._last_torque[motor_id] = target_tor
             self._last_command[motor_id] = (target_pos, target_vel, kp, target_tor)
+            self._command_history[motor_id].append((target_pos, target_vel, kp, target_tor))
             self._last_kd[motor_id] = kd
             if motor_id not in self._stuck:
                 if kp > 0.0:

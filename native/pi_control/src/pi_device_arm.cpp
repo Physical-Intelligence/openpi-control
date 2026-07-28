@@ -257,6 +257,38 @@ void DeviceArm::reset_slew_targets_to_current() {
     follower_slew_last_time_ = std::chrono::steady_clock::now();
 }
 
+ReturnCode DeviceArm::update_follower_feedforward_torques() {
+    std::fill(target_tor_.begin(), target_tor_.end(), 0.0f);
+
+    if (!follower_gravity_compensation_) {
+        return ReturnCode::SUCCESS;
+    }
+    if (!p_algo_) {
+        PI_ERROR("Algorithm handler is not initialized while computing follower feed-forward for %s_%s",
+                 model_.c_str(), id_.c_str());
+        return ReturnCode::NOT_INITIALIZED;
+    }
+
+    int i = 0;
+    for (auto& p_joint : joints_) {
+        current_motor_positions_[i++] = p_joint->get_pos_rad_relative() * p_joint->get_dir_invert();
+    }
+
+    ReturnCode return_code = p_algo_->gravity_compensation(current_motor_positions_, target_tor_);
+    if (return_code != ReturnCode::SUCCESS) {
+        PI_ERROR("Gravity compensation algorithm execution failed for %s_%s", model_.c_str(), id_.c_str());
+        return return_code;
+    }
+
+    i = 0;
+    for (auto& p_joint : joints_) {
+        target_tor_[i] *= p_joint->gravity_comp_factor_;
+        target_tor_[i] -= p_joint->follow_viscous_damping_ * p_joint->get_vel_rad_sec();
+        i++;
+    }
+    return ReturnCode::SUCCESS;
+}
+
 ReturnCode DeviceArm::park_safely() {
     ReturnCode first_error = ReturnCode::SUCCESS;
 
@@ -1312,6 +1344,17 @@ ReturnCode DeviceArm::move_to_ready_position() {
     const std::unordered_set<int16_t> failed_ids = failed_joint_ids_snapshot();
     const float step = ready_move_step_rad();
 
+    // A ready move is still a loaded follower position trajectory. Recompute
+    // the same gravity feed-forward used during normal policy control before
+    // issuing any ready-position commands. Previously the default PARALLEL
+    // branch called Joint::move(position) directly, which writes zero MIT
+    // torque; the first target is almost identical to the measured pose, so
+    // position error initially supplies no restoring torque and the arm sags.
+    return_code = update_follower_feedforward_torques();
+    if (return_code != ReturnCode::SUCCESS) {
+        return return_code;
+    }
+
     if (is_ready_arm_ == false) {
         if (init_count_ < 1) {
             reached_cnt_ = 0;
@@ -1340,7 +1383,8 @@ ReturnCode DeviceArm::move_to_ready_position() {
             float worst_displacement = 0.0f;
             int16_t worst_joint_sid = -1;
 
-            for (auto& p_joint : joints_) {
+            for (size_t joint_index = 0; joint_index < joints_.size(); joint_index++) {
+                auto& p_joint = joints_[joint_index];
                 const int16_t sid = p_joint->reference_servo_id();
 
                 // Best-effort: skip joints that have already failed. They cannot accept commands,
@@ -1425,7 +1469,8 @@ ReturnCode DeviceArm::move_to_ready_position() {
                 );
 
 
-                return_code = p_joint->move(new_pos);
+                return_code = move(
+                    p_joint.get(), new_pos, target_tor_[joint_index], p_joint->safe_mode_derating_);
                 if (return_code != ReturnCode::SUCCESS) {
                     PI_ERROR("Failed to move joint %d (servo %d) in move_to_ready_position()",
                              p_joint->id_, sid);
@@ -1570,7 +1615,16 @@ ReturnCode DeviceArm::move_to_ready_position() {
                     return ReturnCode::SUCCESS;
                 }
 
-                return_code = move(p_joint, p_joint->target_pos_, 0, p_joint->safe_mode_derating_);
+                const auto joint_it = std::find_if(
+                    joints_.begin(), joints_.end(),
+                    [p_joint](const std::unique_ptr<Joint>& candidate) { return candidate.get() == p_joint; });
+                if (joint_it == joints_.end()) {
+                    PI_ERROR("Joint %d is missing from the arm joint list", p_joint->id_);
+                    return ReturnCode::NOT_INITIALIZED;
+                }
+                const size_t joint_index = static_cast<size_t>(std::distance(joints_.begin(), joint_it));
+                return_code = move(
+                    p_joint, p_joint->target_pos_, target_tor_[joint_index], p_joint->safe_mode_derating_);
                 if (return_code != ReturnCode::SUCCESS) {
                     PI_ERROR("Failed to move joint %d (servo %d) to target position in move_to_ready_position()",
                              joint_id_to_move, sid);
@@ -1624,8 +1678,11 @@ ReturnCode DeviceArm::move_to_ready_position() {
             return ReturnCode::INVALID_PARAM;
         }
     } else {
-        for (auto& p_joint : joints_) {
-            return_code = move(p_joint.get(), p_joint->get_pos_rad_relative(), 0, p_joint->safe_mode_derating_);
+        for (size_t joint_index = 0; joint_index < joints_.size(); joint_index++) {
+            auto& p_joint = joints_[joint_index];
+            return_code = move(
+                p_joint.get(), p_joint->get_pos_rad_relative(), target_tor_[joint_index],
+                p_joint->safe_mode_derating_);
             if (return_code != ReturnCode::SUCCESS) {
                 PI_ERROR("Failed to maintain joint position in move_to_ready_position()");
                 return return_code;
@@ -1790,11 +1847,6 @@ ReturnCode DeviceArm::operate_as_follower() {
         return ReturnCode::NOT_SUPPORTED;
     }
 
-    if (!p_algo_ && follower_gravity_compensation_) {
-        PI_ERROR("Algorithm handler is not initialized in operate_as_follower()");
-        return ReturnCode::NOT_INITIALIZED;
-    }
-
     if (gravity_float_active_) {
         // Calibration gravity float (gravity_tune / arm_check on a follower
         // node): the joints are in leader control mode, so the arm rests on the
@@ -1849,30 +1901,9 @@ ReturnCode DeviceArm::operate_as_follower() {
         return ReturnCode::SUCCESS;
     }
 
-    // Reuse pre-allocated vector (reset to zero)
-    std::fill(target_tor_.begin(), target_tor_.end(), 0.0f);
-
-    if (follower_gravity_compensation_) {
-        // Reuse pre-allocated vector
-        int i = 0;
-        for (auto& p_joint : joints_) {
-            current_motor_positions_[i++] = p_joint->get_pos_rad_relative() * p_joint->get_dir_invert();
-        }
-
-        return_code = p_algo_->gravity_compensation(current_motor_positions_, target_tor_);
-        if (return_code != ReturnCode::SUCCESS) {
-            PI_ERROR("Gravity compensation algorithm execution failed for %s_%s", model_.c_str(), id_.c_str());
-            return return_code;
-        }
-
-        // Empirical per-joint fit on top of the model torques (matches the factors
-        // i2rt shipped for the same hardware). Defaults to 1.0 when unconfigured.
-        i = 0;
-        for (auto& p_joint : joints_) {
-            target_tor_[i] *= p_joint->gravity_comp_factor_;
-            target_tor_[i] -= p_joint->follow_viscous_damping_ * p_joint->get_vel_rad_sec();
-            i++;
-        }
+    return_code = update_follower_feedforward_torques();
+    if (return_code != ReturnCode::SUCCESS) {
+        return return_code;
     }
 
     // Synchronized follower slew: bound the tracking velocity by each joint's

@@ -278,6 +278,7 @@ while True:
     native_pid: int | None = None
     native_pidfd: int | None = None
     try:
+
         def client_is_connected() -> bool:
             if native_pid_file.exists():
                 return True
@@ -348,6 +349,7 @@ def test_connect_is_passive_and_explicit_homing_still_works(fake_bus, session_fa
         # Explicit homing must still execute even though startup homing is
         # disabled (the flag is scoped to the startup phase).
         follower.move_to_ready()
+
         def joints_at_home() -> bool:
             current = follower.read_state(timeout_s=2.0).joints.position_rad
             return all(abs(p) < 0.02 for p in current)
@@ -359,7 +361,44 @@ def test_connect_is_passive_and_explicit_homing_still_works(fake_bus, session_fa
         )
 
 
-def test_gripper_polarity_and_command_round_trip(fake_bus_with_gripper):
+def test_move_to_ready_keeps_gravity_feedforward(fake_bus):
+    # A follower normally carries model gravity torque in every position frame.
+    # Moving to ready must preserve that support: replacing it with zero torque
+    # makes the real arm fall until position error grows enough for the PD loop
+    # to catch it.
+    from openpi_control import ArmConfig, ArmSession, SocketCanConnection
+
+    for motor_id in (2, 3):
+        fake_bus.set_position(motor_id, 1.0)
+
+    session = ArmSession()
+    follower = session.add_follower(
+        ArmConfig(
+            "sil-follower",
+            "Yam",
+            SocketCanConnection(VCAN),
+            follower_gravity_compensation=True,
+        )
+    )
+    with session:
+        session.connect()
+        follower.read_state(timeout_s=10.0)
+        wait_for(
+            lambda: abs(fake_bus.last_torque(3)) > 0.2,
+            timeout_s=10.0,
+            what="gravity feedforward before ready movement",
+        )
+
+        first_ready_command = fake_bus.mit_command_count(3)
+        follower.move_to_ready()
+        ready_commands = fake_bus.commands_since(3, first_ready_command)
+        loaded_commands = [command for command in ready_commands if 0.85 < command[0] < 0.98]
+
+        assert loaded_commands, "ready movement emitted no commands through the loaded elbow range"
+        assert all(abs(command[3]) > 0.05 for command in loaded_commands)
+
+
+def test_gripper_polarity_command_round_trip_and_ready_pose(fake_bus_with_gripper):
     # Pins the E_Yam gripper's normalized convention end to end: 0 = closed (zero
     # travel), 1 = open (full travel) -- the on-disk i2rt convention. The servo is
     # configured with dir_invert=-1, a joint-frame sign (relative = -absolute), which
@@ -427,6 +466,13 @@ def test_gripper_polarity_and_command_round_trip(fake_bus_with_gripper):
         )
         # The commanded 0.3 must be on the closed side physically: travel shrank.
         assert abs(fake_bus_with_gripper.position(7)) < 2.5
+
+        follower.move_to_ready()
+        wait_for(
+            lambda: follower.read_state(timeout_s=2.0).effector.position > 0.98,
+            timeout_s=10.0,
+            what="ready movement to leave the gripper fully open",
+        )
 
 
 def test_gripper_coil_overtemperature_fails_with_actionable_error(fake_bus_with_gripper):
@@ -1193,9 +1239,11 @@ def test_teleop_pair_engage_mirrors_joints_gripper_and_keeps_gravity():
             def dump_pair_state(label: str) -> None:
                 lead = leader.read_state(timeout_s=2.0).joints.position_rad
                 follow = follower.read_state(timeout_s=2.0).joints.position_rad
-                print(f"{label}: leader={[round(p, 3) for p in lead]} "
-                      f"follower={[round(p, 3) for p in follow]} "
-                      f"baseline={[round(p, 3) for p in follower_positions]}")
+                print(
+                    f"{label}: leader={[round(p, 3) for p in lead]} "
+                    f"follower={[round(p, 3) for p in follow]} "
+                    f"baseline={[round(p, 3) for p in follower_positions]}"
+                )
                 for arm in (leader, follower):
                     log_tail = "".join(arm._backend._log_lines)[-1500:]  # noqa: SLF001
                     print(f"--- {arm.name} node log tail ---\n{log_tail}")
@@ -1407,8 +1455,9 @@ def test_over_torque_warns_once_and_continues_by_default(fake_bus, session_facto
         target = [0.2, 0.25, 0.3, 0.0, 0.1, -0.1]
         follower.command(PositionCommand(target))
         wait_for(
-            lambda: abs(follower.read_state(timeout_s=2.0).joints.position_rad[0] - target[0])
-            < 0.02,
+            lambda: (
+                abs(follower.read_state(timeout_s=2.0).joints.position_rad[0] - target[0]) < 0.02
+            ),
             timeout_s=20.0,
             what="commands to continue after warning-only over-torque",
         )

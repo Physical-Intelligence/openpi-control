@@ -1011,14 +1011,16 @@ ReturnCode DeviceEffector::move_to_ready_position() {
         return ReturnCode::SUCCESS;
     }
 
-    // Unified velocity-bounded effector ready move. Healthy moves use the
+    // Unified velocity-bounded effector ready move. The ready pose is semantic
+    // normalized position 1.0 (fully open), converted through the effector's
+    // calibrated range and open_at_min polarity. Healthy moves use the
     // effector-specific rate, capped by the configured joint limit. Reusing
     // the arm's 0.3 rad/s rate made a full 4.5-5.4 rad gripper stroke take
     // 15-18 seconds. Emergency recovery deliberately keeps its existing
     // conservative rate.
     //
     // Step size is identical for every effector joint. Time scales with
-    // distance from home; the heartbeat watchdog catches genuine control-loop hangs.
+    // distance from the ready target; the heartbeat watchdog catches genuine control-loop hangs.
     // Always honour the failed-joint set so communication-failure joints are skipped from the
     // first iteration onward, and treat stuck joints as "within tolerance" for the exit
     // criterion so the ready movement cannot loop forever.
@@ -1030,17 +1032,18 @@ ReturnCode DeviceEffector::move_to_ready_position() {
         ready_velocity = std::min(ready_velocity, p_joint->vel_max_);
     }
     const float step = ready_move_step_rad(ready_velocity);
+    const float ready_position = get_gripper_pos_rad_relative_from_normalized(1.0f);
 
     if (init_count_ < 1) {
         reached_cnt_ = 0;
         float max_displacement = 0.0f;
         for (auto& p_joint : joints_) {
-            p_joint->target_pos_ = p_joint->get_home_pos_relative();
+            p_joint->target_pos_ = ready_position;
             const float start_pos = p_joint->get_pos_rad_relative();
             p_joint->prev_target_pos_ = start_pos;
             p_joint->reset_stuck_counter();
             max_displacement = std::max(
-                max_displacement, static_cast<float>(fabs(p_joint->get_home_pos_relative() - start_pos)));
+                max_displacement, static_cast<float>(fabs(ready_position - start_pos)));
         }
         ready_move_budget_init(max_displacement, step);
     }
