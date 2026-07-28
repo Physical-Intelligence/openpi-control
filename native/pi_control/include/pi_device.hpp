@@ -420,9 +420,21 @@ class Device {
     float ready_move_step_rad() const {
         const float vel = is_slow_move_active() ? cla_.move_to_ready_vel_rad_s_error
                                                 : cla_.move_to_ready_vel_rad_s_normal;
+        return ready_move_step_rad(vel);
+    }
+
+    /*!
+     * @brief Converts a device-specific ready velocity to a per-loop position step.
+     *
+     * Arm joints use the command-line ready velocities above. Effectors have a
+     * much larger angular travel and call this overload with their own bounded
+     * velocity; sharing the arm's 0.3 rad/s rate made a 4.5-5.4 rad gripper
+     * stroke take 15-18 seconds.
+     */
+    float ready_move_step_rad(float velocity_rad_s) const {
         const float freq = static_cast<float>(cla_.control_frequency);
         const float dt = (freq > 0.0f) ? (1.0f / freq) : (1.0f / 50.0f);  // fallback to 50 Hz if cla unset
-        return vel * dt;
+        return velocity_rad_s * dt;
     }
 
     /*!

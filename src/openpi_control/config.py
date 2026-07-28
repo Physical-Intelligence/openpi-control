@@ -96,7 +96,9 @@ def connection_for_interface(interface: str) -> ArmConnection:
 class SafetyLimits:
     max_bilateral_gain: float = 0.3
     max_joint_velocity_rad_s: float = 0.3
-    max_effector_velocity_s: float = 0.5
+    # Effector positions are normalized to [0, 1], so 1.0 permits one full
+    # gripper stroke per second during pre-teleop alignment.
+    max_effector_velocity_s: float = 1.0
     minimum_alignment_duration_s: float = 1.0
     max_alignment_duration_s: float = 30.0
     max_alignment_error_rad: float = 0.05

@@ -30,8 +30,8 @@
 // emergency recovery. Configurable via --move_to_ready_vel_rad_s_{normal,error}.
 #define MOVE_TO_READY_VEL_RAD_S_NORMAL            0.30f              ///< NORMAL speed for healthy move-to-ready.
 #define MOVE_TO_READY_VEL_RAD_S_ERROR             0.20f              ///< ERROR speed for emergency recovery (~1.5x slower than NORMAL).
-#define MOVE_TO_READY_VEL_RAD_S_NORMAL_EFFECTOR   MOVE_TO_READY_VEL_RAD_S_NORMAL  ///< Effector NORMAL speed; alias for now.
-#define MOVE_TO_READY_VEL_RAD_S_ERROR_EFFECTOR    MOVE_TO_READY_VEL_RAD_S_ERROR   ///< Effector ERROR speed; alias for now.
+#define MOVE_TO_READY_VEL_RAD_S_NORMAL_EFFECTOR   3.0f               ///< Effector NORMAL speed; capped by each effector joint's configured vel_max.
+#define MOVE_TO_READY_VEL_RAD_S_ERROR_EFFECTOR    MOVE_TO_READY_VEL_RAD_S_ERROR   ///< Effector ERROR speed; conservative emergency-recovery rate.
 
 // Stuck detection thresholds for ready movement exit. A joint that has been commanded toward the
 // ready position but has not moved more than READY_MOVE_STUCK_POS_DELTA_RAD per iteration for

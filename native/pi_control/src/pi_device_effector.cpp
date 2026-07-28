@@ -6,6 +6,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include "pi_device_effector.hpp"
@@ -1010,14 +1011,25 @@ ReturnCode DeviceEffector::move_to_ready_position() {
         return ReturnCode::SUCCESS;
     }
 
-    // Unified velocity-bounded effector ready move. Step size is identical for every joint
-    // (NORMAL speed for startup/command, ERROR speed during emergency recovery). Time scales
-    // with distance from home; the heartbeat watchdog catches genuine control-loop hangs.
+    // Unified velocity-bounded effector ready move. Healthy moves use the
+    // effector-specific rate, capped by the configured joint limit. Reusing
+    // the arm's 0.3 rad/s rate made a full 4.5-5.4 rad gripper stroke take
+    // 15-18 seconds. Emergency recovery deliberately keeps its existing
+    // conservative rate.
+    //
+    // Step size is identical for every effector joint. Time scales with
+    // distance from home; the heartbeat watchdog catches genuine control-loop hangs.
     // Always honour the failed-joint set so communication-failure joints are skipped from the
     // first iteration onward, and treat stuck joints as "within tolerance" for the exit
     // criterion so the ready movement cannot loop forever.
     const std::unordered_set<int16_t> failed_ids = failed_joint_ids_snapshot();
-    const float step = ready_move_step_rad();
+    float ready_velocity = is_slow_move_active()
+                               ? MOVE_TO_READY_VEL_RAD_S_ERROR_EFFECTOR
+                               : MOVE_TO_READY_VEL_RAD_S_NORMAL_EFFECTOR;
+    for (const auto& p_joint : joints_) {
+        ready_velocity = std::min(ready_velocity, p_joint->vel_max_);
+    }
+    const float step = ready_move_step_rad(ready_velocity);
 
     if (init_count_ < 1) {
         reached_cnt_ = 0;
@@ -1109,7 +1121,11 @@ ReturnCode DeviceEffector::move_to_ready_position() {
                 p_joint->id_, p_joint->target_pos_, new_pos, current_pos, step,
                 p_joint->safe_mode_derating_);
 
-        return_code = p_joint->move(new_pos);
+        // A faster free-space trajectory must not increase squeeze force when
+        // the gripper is blocked by an object. Apply the same symmetric
+        // motor-side force bound used by normal position-mode operation.
+        return_code = p_joint->move(
+            p_joint->clamp_target_to_grip_torque_limit(new_pos));
         if (return_code != ReturnCode::SUCCESS) {
             PI_ERROR(
                 "Failed to move effector joint %d (servo %d) in move_to_ready_position()",

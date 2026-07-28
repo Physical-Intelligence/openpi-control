@@ -45,7 +45,7 @@
                     "dir_invert": 1,
                     "reverse_flag": false,
                     "pos_max": 5.077,
-                    "pos_min": 0,
+                    "pos_min": -0.2,
                     "response_delay": 0.025,
                     "kT": 1,
                     "kA": 1,

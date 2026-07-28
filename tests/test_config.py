@@ -8,6 +8,7 @@ from openpi_control import (
     ConfigurationError,
     EthernetConnection,
     InputLayout,
+    SafetyLimits,
     SerialConnection,
     SocketCanConnection,
     connection_for_interface,
@@ -43,6 +44,13 @@ def test_connection_for_interface_dispatches_on_the_interface_form() -> None:
 def test_serial_connection_requires_a_dev_path() -> None:
     with pytest.raises(ConfigurationError, match="/dev path"):
         SerialConnection("ttyUSB0")
+
+
+def test_default_alignment_allows_a_full_effector_stroke_in_one_second() -> None:
+    limits = SafetyLimits()
+
+    assert limits.max_effector_velocity_s == 1.0
+    assert limits.max_effector_velocity_s * limits.minimum_alignment_duration_s >= 1.0
 
 
 def test_so101_catalog_declares_serial_port_type_and_baudrate() -> None:
