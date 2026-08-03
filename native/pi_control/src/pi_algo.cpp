@@ -86,7 +86,10 @@ Algo* Algo::new_algo(Device* p_device, const DeviceConfig* p_config_model, const
     }
 
     Algo* p_algo = nullptr;
-    if (algo_type == p_config_model->val_algo_type_algo) {
+    if (algo_type == p_config_model->val_algo_type_none) {
+        PI_INFO("Algo", InfoLevel::HELPFUL_1, "No external algorithm requested");
+        return nullptr;
+    } else if (algo_type == p_config_model->val_algo_type_algo) {
         p_algo = new Algo(p_device, cla);
         PI_INFO("Algo", InfoLevel::HELPFUL_1, "Created base Algo class instance");
 #ifdef ENABLE_ALGO_PINO

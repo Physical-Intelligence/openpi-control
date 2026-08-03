@@ -1,0 +1,13 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5832d95..33477a7 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -85,7 +85,7 @@ include(FetchFMT)
+ add_subdirectory(common)
+ 
+ ## Library
+-add_library(franka SHARED
++add_library(franka STATIC
+   src/active_control.cpp
+   src/active_motion_generator.cpp
+   src/active_torque_control.cpp

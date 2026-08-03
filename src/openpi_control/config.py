@@ -7,6 +7,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
 
@@ -18,6 +19,7 @@ SUPPORTED_MODELS = (
     "ARX_ENC",
     "ARX_L5",
     "ARX_X5",
+    "FR3",
     "SO101",
     "Trossen_wai_ctrl",
     "Yam",
@@ -30,6 +32,7 @@ SUPPORTED_EFFECTORS = (
     "E_Yam",
     "E_Yam_Handle",
     "E_Yam_Handle_compat",
+    "Robotiq",
 )
 
 
@@ -72,7 +75,92 @@ class SerialConnection:
             )
 
 
-ArmConnection = SocketCanConnection | EthernetConnection | SerialConnection
+@dataclass(frozen=True, slots=True)
+class FR3Connection:
+    """A Franka Emika FR3 controller at a fixed IPv4 address."""
+
+    address: str
+    reset_pose_rad: tuple[float, ...] = (
+        0.0,
+        -0.6283185307,
+        0.0,
+        -2.5132741229,
+        0.0,
+        1.8849555922,
+        0.0,
+    )
+
+    def __post_init__(self) -> None:
+        try:
+            ipaddress.IPv4Address(self.address)
+        except ValueError as err:
+            raise ConfigurationError(f"invalid FR3 IPv4 address {self.address!r}") from err
+        pose = tuple(float(value) for value in self.reset_pose_rad)
+        if len(pose) != 7 or any(not math.isfinite(value) for value in pose):
+            raise ConfigurationError("FR3 reset_pose_rad must contain seven finite joint positions")
+        object.__setattr__(self, "reset_pose_rad", pose)
+
+
+class RobotiqTransport(StrEnum):
+    RTU = "rtu"
+    TCP = "tcp"
+
+
+@dataclass(frozen=True, slots=True)
+class RobotiqConnection:
+    """Robotiq 2F gripper using true Modbus RTU or Modbus TCP."""
+
+    transport: RobotiqTransport
+    endpoint: str
+    port: int = 502
+    baud_rate: int = 115200
+    slave_id: int = 9
+    poll_frequency_hz: int = 50
+    timeout_s: float = 0.2
+    open_position_raw: int = 3
+    closed_position_raw: int = 230
+    default_speed: float = 1.0
+    default_force: float = 1.0
+
+    @classmethod
+    def rtu(cls, device: str, **kwargs: object) -> RobotiqConnection:
+        return cls(RobotiqTransport.RTU, device, **kwargs)
+
+    @classmethod
+    def tcp(cls, address: str, *, port: int = 502, **kwargs: object) -> RobotiqConnection:
+        return cls(RobotiqTransport.TCP, address, port=port, **kwargs)
+
+    def __post_init__(self) -> None:
+        try:
+            transport = RobotiqTransport(self.transport)
+        except ValueError as err:
+            raise ConfigurationError("Robotiq transport must be 'rtu' or 'tcp'") from err
+        object.__setattr__(self, "transport", transport)
+        if transport is RobotiqTransport.RTU:
+            if not self.endpoint.startswith("/dev/"):
+                raise ConfigurationError("Robotiq RTU endpoint must be a /dev path")
+        else:
+            try:
+                ipaddress.IPv4Address(self.endpoint)
+            except ValueError as err:
+                raise ConfigurationError(
+                    f"invalid Robotiq TCP IPv4 address {self.endpoint!r}"
+                ) from err
+        if not 1 <= self.port <= 65535:
+            raise ConfigurationError("Robotiq TCP port must be between 1 and 65535")
+        if self.baud_rate <= 0 or not 0 <= self.slave_id <= 247:
+            raise ConfigurationError("Robotiq baud_rate and slave_id are invalid")
+        if self.poll_frequency_hz <= 0 or self.timeout_s <= 0:
+            raise ConfigurationError("Robotiq polling frequency and timeout must be positive")
+        if not 0 <= self.open_position_raw < self.closed_position_raw <= 255:
+            raise ConfigurationError("Robotiq raw positions must satisfy 0 <= open < closed <= 255")
+        for name in ("default_speed", "default_force"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ConfigurationError(f"Robotiq {name} must be in [0, 1]")
+
+
+ArmConnection = SocketCanConnection | EthernetConnection | SerialConnection | FR3Connection
 
 
 def connection_for_interface(interface: str) -> ArmConnection:
@@ -139,7 +227,7 @@ _HANDLE_INPUT_LAYOUTS = {
 class ResolvedArmAssets:
     model_config: Path
     instance_config: Path
-    urdf: Path
+    urdf: Path | None
     effector_model_config: Path | None
     effector_instance_config: Path | None
 
@@ -166,14 +254,16 @@ def resolve_model_assets(
     arm_dir = root / "arms" / model
     model_config = arm_dir / f"{model}.json"
     instance = instance_config or arm_dir / f"{model}_01.json"
-    resolved_urdf = urdf or arm_dir / f"{model}.urdf"
+    resolved_urdf = urdf or (None if model == "FR3" else arm_dir / f"{model}.urdf")
     eff_model: Path | None = None
     eff_instance: Path | None = None
     if effector_model:
         eff_dir = root / "effectors" / effector_model
         eff_model = eff_dir / f"{effector_model}.json"
         eff_instance = effector_instance_config or eff_dir / f"{effector_model}_01.json"
-    required = [model_config, Path(instance), Path(resolved_urdf)]
+    required = [model_config, Path(instance)]
+    if resolved_urdf is not None:
+        required.append(Path(resolved_urdf))
     if eff_model is not None and eff_instance is not None:
         required.extend([eff_model, Path(eff_instance)])
     missing = [str(path) for path in required if not path.is_file()]
@@ -182,7 +272,7 @@ def resolve_model_assets(
     return ResolvedArmAssets(
         model_config=model_config,
         instance_config=Path(instance),
-        urdf=Path(resolved_urdf),
+        urdf=Path(resolved_urdf) if resolved_urdf is not None else None,
         effector_model_config=eff_model,
         effector_instance_config=Path(eff_instance) if eff_instance else None,
     )
@@ -197,6 +287,7 @@ class ArmConfig:
     connection: ArmConnection
     instance_config: Path | None = None
     effector_model: str | None = None
+    effector_connection: RobotiqConnection | None = None
     effector_instance_config: Path | None = None
     urdf: Path | None = None
     # First contact after the arm has sat idle can exceed a minute of native
@@ -238,6 +329,17 @@ class ArmConfig:
                 f"unsupported effector {self.effector_model!r}; supported effectors: "
                 f"{', '.join(SUPPORTED_EFFECTORS)}"
             )
+        if self.model == "FR3":
+            if not isinstance(self.connection, FR3Connection):
+                raise ConfigurationError("FR3 requires an FR3Connection")
+            if self.effector_model != "Robotiq" or self.effector_connection is None:
+                raise ConfigurationError("FR3 requires a Robotiq effector and connection")
+        elif isinstance(self.connection, FR3Connection):
+            raise ConfigurationError("FR3Connection can only be used with the FR3 model")
+        if self.effector_model == "Robotiq" and self.model != "FR3":
+            raise ConfigurationError("the Robotiq effector is only supported on FR3")
+        if self.effector_connection is not None and self.effector_model != "Robotiq":
+            raise ConfigurationError("effector_connection is only valid for a Robotiq effector")
         if self.connect_timeout_s <= 0:
             raise ConfigurationError("connect_timeout_s must be positive")
         if self.leader_gravity_compensation is None:

@@ -7,7 +7,9 @@ from openpi_control import (
     ArmConfig,
     ConfigurationError,
     EthernetConnection,
+    FR3Connection,
     InputLayout,
+    RobotiqConnection,
     SafetyLimits,
     SerialConnection,
     SocketCanConnection,
@@ -19,18 +21,56 @@ from openpi_control.protocol import topics_for
 
 @pytest.mark.parametrize("model", SUPPORTED_MODELS)
 def test_physical_model_catalog_is_complete(model: str) -> None:
-    config = ArmConfig("arm", model, SocketCanConnection("test"))
+    config = (
+        ArmConfig(
+            "arm",
+            "FR3",
+            FR3Connection("192.168.1.10"),
+            effector_model="Robotiq",
+            effector_connection=RobotiqConnection.tcp("192.168.1.11"),
+        )
+        if model == "FR3"
+        else ArmConfig("arm", model, SocketCanConnection("test"))
+    )
     assets = config.resolve_assets()
     assert assets.model_config.is_file()
     assert assets.instance_config.is_file()
-    assert assets.urdf.is_file()
+    if model == "FR3":
+        assert assets.urdf is None
+    else:
+        assert assets.urdf is not None and assets.urdf.is_file()
     # SO101 (SO-ARM100/101) is the catalog's only 5-DOF arm; everything else is 6-DOF.
-    assert len(config.joint_names()) == (5 if model == "SO101" else 6)
+    assert len(config.joint_names()) == (7 if model == "FR3" else 5 if model == "SO101" else 6)
     # The native node is always launched with --algo_type Pinocchio, which overrides
     # any config value except "Algo" (config keeps priority for "Algo"). Arm configs
     # must therefore never declare "Algo": robot-test 1.1.1 configs say "KDL"
     # (overridden to Pinocchio), openpi-tuned configs say "Pinocchio" directly.
-    assert json.loads(assets.model_config.read_text())["algo_type"] in ("Pinocchio", "KDL")
+    expected_algos = ("None",) if model == "FR3" else ("Pinocchio", "KDL")
+    assert json.loads(assets.model_config.read_text())["algo_type"] in expected_algos
+
+
+def test_fr3_requires_typed_arm_and_gripper_connections() -> None:
+    gripper = RobotiqConnection.rtu("/dev/serial/by-id/usb-robotiq")
+    config = ArmConfig(
+        "follower",
+        "FR3",
+        FR3Connection("192.168.1.10"),
+        effector_model="Robotiq",
+        effector_connection=gripper,
+    )
+    assert config.joint_names() == tuple(f"fr3_joint{i}" for i in range(1, 8))
+    assert gripper.endpoint.startswith("/dev/serial/by-id/")
+    with pytest.raises(ConfigurationError, match="FR3 requires"):
+        ArmConfig("follower", "FR3", SocketCanConnection("can0"))
+
+
+def test_robotiq_supports_true_rtu_and_tcp_endpoints() -> None:
+    rtu = RobotiqConnection.rtu("/dev/ttyUSB0", baud_rate=115200)
+    tcp = RobotiqConnection.tcp("192.168.1.11", port=502)
+    assert rtu.transport.value == "rtu"
+    assert tcp.transport.value == "tcp"
+    with pytest.raises(ConfigurationError, match="/dev path"):
+        RobotiqConnection.rtu("192.168.1.11")
 
 
 def test_connection_for_interface_dispatches_on_the_interface_form() -> None:

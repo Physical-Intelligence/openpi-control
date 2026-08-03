@@ -34,8 +34,24 @@ set(CMAKE_INSTALL_RPATH "$ORIGIN/../libs")
 find_package(Boost CONFIG REQUIRED COMPONENTS program_options)
 find_package(PkgConfig REQUIRED)
 find_package(Eigen3 REQUIRED)
+if(NOT TARGET Eigen3::Eigen3 AND TARGET Eigen3::Eigen)
+  add_library(Eigen3::Eigen3 ALIAS Eigen3::Eigen)
+endif()
+find_package(fmt REQUIRED)
+find_package(Poco REQUIRED COMPONENTS Net Foundation)
+find_package(pinocchio REQUIRED)
+find_package(Franka 0.21.3 EXACT CONFIG REQUIRED)
 pkg_check_modules(PC_ZMQ REQUIRED libzmq)
 pkg_check_modules(PINOCCHIO REQUIRED pinocchio)
+pkg_check_modules(TINYXML2 REQUIRED IMPORTED_TARGET tinyxml2)
+add_library(TinyXML2::TinyXML2 ALIAS PkgConfig::TINYXML2)
+
+find_library(OPENPI_CONTROL_MODBUS_STATIC_LIBRARY NAMES libmodbus.a
+  PATHS "${OPENPI_CONTROL_LIBMODBUS_PREFIX}/lib" NO_DEFAULT_PATH REQUIRED)
+add_library(openpi_control_modbus STATIC IMPORTED)
+set_target_properties(openpi_control_modbus PROPERTIES
+  IMPORTED_LOCATION "${OPENPI_CONTROL_MODBUS_STATIC_LIBRARY}"
+  INTERFACE_INCLUDE_DIRECTORIES "${OPENPI_CONTROL_LIBMODBUS_PREFIX}/include/modbus")
 
 # Trossen iNerve controller SDK (DriverTrossen). Provisioned by
 # scripts/build_deps.sh from the pinned TrossenRobotics/trossen_arm release
@@ -81,6 +97,9 @@ set(COMMON_SOURCES
   src/pi_driver_can.cpp
   src/pi_driver_controller.cpp
   src/pi_driver_trossen.cpp
+  src/pi_driver_fr3.cpp
+  src/pi_fr3_controller.cpp
+  src/pi_robotiq.cpp
   # Serial bus-servo stack (protocol-neutral DriverSerial + FeeTech; a future
   # Dynamixel port adds pi_driver_dxl.cpp / pi_servo_dxl.cpp here).
   src/pi_driver_serial.cpp
@@ -96,6 +115,7 @@ set(COMMON_SOURCES
   src/pi_device_arm.cpp
   src/pi_device_arm_can.cpp
   src/pi_device_arm_serial.cpp
+  src/pi_device_fr3.cpp
   src/pi_device_effector.cpp
   src/pi_device_effector_can.cpp
   src/pi_device_effector_controller.cpp
@@ -137,7 +157,10 @@ target_link_libraries(${OPENPI_CONTROL_TARGET}
   ${PINOCCHIO_LDFLAGS}
   Boost::program_options
   pi_trossen_shim
+  Franka::Franka
+  openpi_control_modbus
 )
+target_link_options(${OPENPI_CONTROL_TARGET} PRIVATE "LINKER:--exclude-libs,ALL")
 
 # Use a transitive DT_RPATH instead of DT_RUNPATH. Libraries copied beside the
 # executable by the runtime-dependency install rule have no reason to know the
@@ -167,6 +190,8 @@ if(OPENPI_CONTROL_BUILD_TESTING)
     ${PINOCCHIO_LDFLAGS}
     Boost::program_options
     pi_trossen_shim
+    Franka::Franka
+    openpi_control_modbus
   )
   gtest_discover_tests(
     pi_topic_zmq_tests
@@ -228,6 +253,8 @@ if(OPENPI_CONTROL_BUILD_FUZZERS)
       ${PINOCCHIO_LDFLAGS}
       Boost::program_options
       pi_trossen_shim
+      Franka::Franka
+      openpi_control_modbus
     )
   endforeach()
 endif()

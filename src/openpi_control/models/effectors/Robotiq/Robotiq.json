@@ -1,0 +1,15 @@
+{
+    "config_version": "1.3.1",
+    "device_model": "Robotiq",
+    "device_type": "effector",
+    "effector_type": "modbus",
+    "topic_type": "ZMQ",
+    "driver_type": "MODBUS",
+    "algo_type": "None",
+    "planning_type": "None",
+    "catalog": {
+        "display_label": "Robotiq 2F (Modbus RTU or TCP)",
+        "order": 9
+    },
+    "joints": [{"joint_id": 7, "joint_name": "robotiq_gripper"}]
+}

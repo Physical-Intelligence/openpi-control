@@ -17,6 +17,8 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install --no-install-recommends --yes \
   build-essential \
+  autoconf \
+  automake \
   ca-certificates \
   cmake \
   ccache \
@@ -25,7 +27,12 @@ apt-get install --no-install-recommends --yes \
   libboost-program-options-dev \
   libboost-serialization-dev \
   libboost-system-dev \
+  libconsole-bridge-dev \
   libeigen3-dev \
+  libfmt-dev \
+  libpoco-dev \
+  libtinyxml2-dev \
+  libtool \
   liburdfdom-dev \
   liburdfdom-headers-dev \
   libzmq3-dev \

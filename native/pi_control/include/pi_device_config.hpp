@@ -46,6 +46,7 @@ class DeviceConfig {
     const std::string val_arm_type_can    = "can";      ///< Value for MIT-mode CAN arms.
     const std::string val_arm_type_controller = "controller";  ///< Value for arms managed by a whole-arm controller (DriverController).
     const std::string val_arm_type_serial  = "serial";   ///< Value for serial bus-servo arms (e.g. SO-ARM101).
+    const std::string val_arm_type_fr3     = "fr3";      ///< Value for Franka Emika FR3 arms.
 
     const std::string fn_effector_type                    = "effector_type";     ///< Field name for effector type.
     const std::string val_effector_type_can                   = "can";               ///< Value for MIT-mode CAN effectors.
@@ -68,11 +69,13 @@ class DeviceConfig {
     const std::string val_driver_type_can_encoder = "CAN_ENCODER"; ///< Value for driver type CAN read-only encoder (DriverArxEncoder).
     const std::string val_driver_type_trossen    = "TROSSEN_ETHERNET";  ///< Value for driver type Trossen iNerve controller over Ethernet (DriverTrossen).
     const std::string val_driver_type_ft         = "FEETECH";      ///< Value for driver type FeeTech SMS/STS serial bus (DriverFt).
+    const std::string val_driver_type_fr3        = "FR3";          ///< Value for libfranka FR3 driver.
     const std::string fn_controller_model        = "controller_model";  ///< Field name for the vendor controller model string (e.g. "wxai_v0").
 
     const std::string fn_algo_type            = "algo_type";   ///< Field name for algorithm type.
     const std::string val_algo_type_algo          = "Algo";        ///< Value for algorithm type Algo.
     const std::string val_algo_type_pinocchio     = "Pinocchio";   ///< Value for algorithm type Pinocchio.
+    const std::string val_algo_type_none          = "None";        ///< Value for devices with an internal controller.
 
     const std::string fn_base_rpy   = "base_rpy";    ///< Field name for base axes rotation (roll, pitch, yaw), radian.
 
