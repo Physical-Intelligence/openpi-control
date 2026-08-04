@@ -163,6 +163,33 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         "Explicit URDF path")(
         OPT_PARENT_LIVENESS_FD, po::value<int>()->default_value(-1),
         "Inherited read end of the supervising process's liveness pipe")(
+        OPT_FR3_ADDRESS, po::value<std::string>()->default_value(""),
+        "FR3 controller hostname or IP address")(
+        OPT_FR3_RESET_POSE,
+        po::value<std::string>()->default_value("0,-0.785398,0,-2.356194,0,1.570796,0.785398"),
+        "Seven comma-separated FR3 reset joint positions in radians")(
+        OPT_ROBOTIQ_TRANSPORT, po::value<std::string>()->default_value(""),
+        "Robotiq transport: rtu or tcp")(
+        OPT_ROBOTIQ_ENDPOINT, po::value<std::string>()->default_value(""),
+        "Robotiq serial device or TCP hostname/address")(
+        OPT_ROBOTIQ_PORT, po::value<int>()->default_value(502),
+        "Robotiq Modbus TCP port")(
+        OPT_ROBOTIQ_BAUD_RATE, po::value<int>()->default_value(115200),
+        "Robotiq Modbus RTU baud rate")(
+        OPT_ROBOTIQ_SLAVE_ID, po::value<int>()->default_value(9),
+        "Robotiq Modbus slave id")(
+        OPT_ROBOTIQ_POLL_FREQUENCY, po::value<int>()->default_value(50),
+        "Robotiq status polling frequency in Hz")(
+        OPT_ROBOTIQ_TIMEOUT_MS, po::value<int>()->default_value(200),
+        "Robotiq Modbus response timeout in milliseconds")(
+        OPT_ROBOTIQ_MIN_POSITION_RAW, po::value<int>()->default_value(3),
+        "Robotiq raw register value for fully open")(
+        OPT_ROBOTIQ_MAX_POSITION_RAW, po::value<int>()->default_value(230),
+        "Robotiq raw register value for fully closed")(
+        OPT_ROBOTIQ_DEFAULT_SPEED, po::value<float>()->default_value(1.0f),
+        "Robotiq speed for position commands, normalized to [0, 1]")(
+        OPT_ROBOTIQ_DEFAULT_FORCE, po::value<float>()->default_value(1.0f),
+        "Robotiq force for position commands, normalized to [0, 1]")(
         OPT_MOVE_TO_READY_VEL_RAD_S_NORMAL,
         po::value<float>()->default_value(MOVE_TO_READY_VEL_RAD_S_NORMAL),
         "Healthy move-to-ready angular speed (rad/s). Used by startup, command-driven "
@@ -313,6 +340,8 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         control_port_name = vm[OPT_CONTROL_PORT].as<std::string>();
         PI_INFO("main()", InfoLevel::ESSENTIAL_0, "Control port name: %s",
                 control_port_name.c_str());
+    } else if (device_model == "FR3") {
+        control_port_name.clear();
     } else {
         PI_ERROR("--%s is not set", OPT_CONTROL_PORT);
         exit(2);
@@ -604,6 +633,19 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
                  OPT_PARENT_LIVENESS_FD, parent_liveness_fd);
         exit(2);
     }
+    fr3_address = vm[OPT_FR3_ADDRESS].as<std::string>();
+    fr3_reset_pose = vm[OPT_FR3_RESET_POSE].as<std::string>();
+    robotiq_transport = vm[OPT_ROBOTIQ_TRANSPORT].as<std::string>();
+    robotiq_endpoint = vm[OPT_ROBOTIQ_ENDPOINT].as<std::string>();
+    robotiq_port = vm[OPT_ROBOTIQ_PORT].as<int>();
+    robotiq_baud_rate = vm[OPT_ROBOTIQ_BAUD_RATE].as<int>();
+    robotiq_slave_id = vm[OPT_ROBOTIQ_SLAVE_ID].as<int>();
+    robotiq_poll_frequency = vm[OPT_ROBOTIQ_POLL_FREQUENCY].as<int>();
+    robotiq_timeout_ms = vm[OPT_ROBOTIQ_TIMEOUT_MS].as<int>();
+    robotiq_min_position_raw = vm[OPT_ROBOTIQ_MIN_POSITION_RAW].as<int>();
+    robotiq_max_position_raw = vm[OPT_ROBOTIQ_MAX_POSITION_RAW].as<int>();
+    robotiq_default_speed = vm[OPT_ROBOTIQ_DEFAULT_SPEED].as<float>();
+    robotiq_default_force = vm[OPT_ROBOTIQ_DEFAULT_FORCE].as<float>();
     if (!topic_live_command.empty()) {
         topic_joint = topic_live_command;
     }
@@ -616,14 +658,37 @@ CommandLineArgs::CommandLineArgs(int argc, char** argv) {
         PI_ERROR("Standalone state/live/direct/lifecycle/status topics are all required");
         exit(2);
     }
-    if (arm_model_config.empty() || arm_instance_config.empty() || urdf_path.empty()) {
-        PI_ERROR("Explicit --arm_model_config, --arm_instance_config, and --urdf_path are required");
+    if (arm_model_config.empty() || arm_instance_config.empty() ||
+        (device_model != "FR3" && urdf_path.empty())) {
+        PI_ERROR("Explicit arm model/instance configs are required; non-FR3 arms also require a URDF");
         exit(2);
     }
     if (!effector_model.empty() &&
         (effector_model_config.empty() || effector_instance_config.empty())) {
         PI_ERROR("Attached effectors require explicit model and instance configuration paths");
         exit(2);
+    }
+    if (device_model == "FR3") {
+        if (role != Role::FOLLOWER || fr3_address.empty()) {
+            PI_ERROR("FR3 requires follower role and --%s", OPT_FR3_ADDRESS);
+            exit(2);
+        }
+        if (!robotiq_transport.empty()) {
+            if ((robotiq_transport != "rtu" && robotiq_transport != "tcp") || robotiq_endpoint.empty()) {
+                PI_ERROR("Robotiq requires transport rtu/tcp and a non-empty endpoint");
+                exit(2);
+            }
+            if (robotiq_port < 1 || robotiq_port > 65535 || robotiq_baud_rate <= 0 ||
+                robotiq_slave_id < 0 || robotiq_slave_id > 247 || robotiq_poll_frequency <= 0 ||
+                robotiq_timeout_ms <= 0 || robotiq_min_position_raw < 0 ||
+                robotiq_max_position_raw > 255 || robotiq_min_position_raw >= robotiq_max_position_raw ||
+                !std::isfinite(robotiq_default_speed) || robotiq_default_speed < 0.0f ||
+                robotiq_default_speed > 1.0f || !std::isfinite(robotiq_default_force) ||
+                robotiq_default_force < 0.0f || robotiq_default_force > 1.0f) {
+                PI_ERROR("Invalid Robotiq transport parameters");
+                exit(2);
+            }
+        }
     }
 
     // Unified move-to-ready / emergency-recovery options. All have defaults so existing

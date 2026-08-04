@@ -25,8 +25,10 @@ from .config import (
     ArmConfig,
     ArmConnection,
     EthernetConnection,
+    FR3Connection,
     InputLayout,
     ResolvedArmAssets,
+    RobotiqTransport,
     SerialConnection,
 )
 from .exceptions import (
@@ -117,6 +119,9 @@ def native_executable() -> Path:
 
 
 def validate_connection(connection: ArmConnection) -> None:
+    if isinstance(connection, FR3Connection):
+        # libfranka performs the authoritative protocol/firmware handshake.
+        return
     if isinstance(connection, EthernetConnection):
         if not trossen_eth.reachable(connection.ip):
             raise ConnectionUnavailableError(
@@ -328,6 +333,17 @@ class NativeArmBackend(ArmBackend):
                     "physical native control is supported on Linux only"
                 )
             validate_connection(config.connection)
+            if isinstance(config.connection, FR3Connection):
+                if role is not ArmRole.FOLLOWER:
+                    raise ConfigurationError("FR3 is supported as a follower only")
+                if config.effector_connection is None:
+                    raise ConfigurationError("FR3 requires a Robotiq effector connection")
+                if config.effector_connection.transport is RobotiqTransport.RTU:
+                    gripper_device = Path(config.effector_connection.endpoint)
+                    if not gripper_device.exists():
+                        raise ConnectionUnavailableError(
+                            f"Robotiq serial device {str(gripper_device)!r} does not exist"
+                        )
             if role is ArmRole.FOLLOWER and config.is_read_only():
                 raise ConfigurationError(
                     f"model {config.model!r} is read-only (leader-only, no actuation) "
@@ -373,7 +389,9 @@ class NativeArmBackend(ArmBackend):
         # node a merged URDF whose end link inertial is replaced with the effector
         # mass model (zero mass when no effector). A caller-supplied URDF is
         # trusted as-is and skips merging.
-        if config.urdf is None:
+        if isinstance(config.connection, FR3Connection):
+            urdf_path = None
+        elif config.urdf is None:
             urdf_path = prepare_merged_urdf(
                 assets, model=config.model, effector_model=config.effector_model
             )
@@ -389,7 +407,38 @@ class NativeArmBackend(ArmBackend):
         # The native node takes the bus identity as an opaque string: a SocketCAN
         # interface name, the controller IPv4 address for Ethernet drivers, or
         # the tty device path for serial buses (which also need the catalog baud).
-        if isinstance(config.connection, EthernetConnection):
+        if isinstance(config.connection, FR3Connection):
+            assert config.effector_connection is not None
+            gripper = config.effector_connection
+            connection_args = [
+                "--fr3_address",
+                config.connection.address,
+                "--fr3_reset_pose",
+                ",".join(f"{value:g}" for value in config.connection.reset_pose_rad),
+                "--robotiq_transport",
+                gripper.transport.value,
+                "--robotiq_endpoint",
+                gripper.endpoint,
+                "--robotiq_port",
+                str(gripper.port),
+                "--robotiq_baud_rate",
+                str(gripper.baud_rate),
+                "--robotiq_slave_id",
+                str(gripper.slave_id),
+                "--robotiq_poll_frequency",
+                str(gripper.poll_frequency_hz),
+                "--robotiq_timeout_ms",
+                str(round(gripper.timeout_s * 1000)),
+                "--robotiq_min_position_raw",
+                str(gripper.open_position_raw),
+                "--robotiq_max_position_raw",
+                str(gripper.closed_position_raw),
+                "--robotiq_default_speed",
+                f"{gripper.default_speed:g}",
+                "--robotiq_default_force",
+                f"{gripper.default_force:g}",
+            ]
+        elif isinstance(config.connection, EthernetConnection):
             connection_args = ["--control_port", config.connection.ip]
         elif isinstance(config.connection, SerialConnection):
             connection_args = [
@@ -422,7 +471,7 @@ class NativeArmBackend(ArmBackend):
             # which this node does not ship; force the Pinocchio implementation.
             # Effector configs declaring "Algo" keep priority over this flag.
             "--algo_type",
-            "Pinocchio",
+            "None" if isinstance(config.connection, FR3Connection) else "Pinocchio",
             "--topic_state",
             topics.state,
             "--topic_live_command",
@@ -437,8 +486,6 @@ class NativeArmBackend(ArmBackend):
             str(assets.model_config),
             "--arm_instance_config",
             str(assets.instance_config),
-            "--urdf_path",
-            str(urdf_path),
             "--force_feedback",
             "-1",
             # Connect is passive: the arm holds its current pose instead of
@@ -447,6 +494,8 @@ class NativeArmBackend(ArmBackend):
             "--dont_go_to_home_pos",
             *connection_args,
         ]
+        if urdf_path is not None:
+            args.extend(["--urdf_path", str(urdf_path)])
         if self._paired_follower_state_topic:
             args.extend(["--paired_follower_state_topic", self._paired_follower_state_topic])
         if config.torq_rescale is not None:

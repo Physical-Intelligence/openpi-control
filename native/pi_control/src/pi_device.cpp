@@ -10,6 +10,7 @@
 #include "pi_device.hpp"
 #include "pi_device_arm_can.hpp"
 #include "pi_device_arm_serial.hpp"
+#include "pi_device_fr3.hpp"
 #include "pi_device_config.hpp"
 #include "pi_device_effector_can.hpp"
 #include "pi_device_effector_controller.hpp"
@@ -581,6 +582,10 @@ Device* Device::new_device(const DeviceConfig& cfg_model, const DeviceConfig& cf
                 } else if (arm_type == cfg_model.val_arm_type_serial) {
                     p_device = new DeviceArmSerial(cla);
                     PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceArmSerial for %s_%s",
+                            cla.device_model.c_str(), cla.device_id.c_str());
+                } else if (arm_type == cfg_model.val_arm_type_fr3) {
+                    p_device = new DeviceFR3(cla);
+                    PI_INFO("Device", InfoLevel::DETAIL_2, "Created DeviceFR3 for %s_%s",
                             cla.device_model.c_str(), cla.device_id.c_str());
                 } else {
                     PI_ERROR("Invalid arm type: %s", arm_type.c_str());

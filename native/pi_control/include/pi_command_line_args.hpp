@@ -74,6 +74,19 @@
 #define OPT_URDF_PATH                             "urdf_path"
 // Read end of the supervising Python process's lifeline pipe.
 #define OPT_PARENT_LIVENESS_FD                    "parent_liveness_fd"
+#define OPT_FR3_ADDRESS                           "fr3_address"
+#define OPT_FR3_RESET_POSE                        "fr3_reset_pose"
+#define OPT_ROBOTIQ_TRANSPORT                     "robotiq_transport"
+#define OPT_ROBOTIQ_ENDPOINT                      "robotiq_endpoint"
+#define OPT_ROBOTIQ_PORT                          "robotiq_port"
+#define OPT_ROBOTIQ_BAUD_RATE                     "robotiq_baud_rate"
+#define OPT_ROBOTIQ_SLAVE_ID                      "robotiq_slave_id"
+#define OPT_ROBOTIQ_POLL_FREQUENCY                "robotiq_poll_frequency"
+#define OPT_ROBOTIQ_TIMEOUT_MS                    "robotiq_timeout_ms"
+#define OPT_ROBOTIQ_MIN_POSITION_RAW              "robotiq_min_position_raw"
+#define OPT_ROBOTIQ_MAX_POSITION_RAW              "robotiq_max_position_raw"
+#define OPT_ROBOTIQ_DEFAULT_SPEED                 "robotiq_default_speed"
+#define OPT_ROBOTIQ_DEFAULT_FORCE                 "robotiq_default_force"
 
 
 // Unified move-to-ready / emergency-recovery options. Every "move to ready" path (startup,
@@ -153,6 +166,19 @@ class CommandLineArgs {
     std::string effector_instance_config;
     std::string urdf_path;
     int parent_liveness_fd = -1;  ///< Inherited lifeline pipe; EOF means the Python owner exited.
+    std::string fr3_address;       ///< FR3 controller hostname or IP address.
+    std::string fr3_reset_pose;    ///< Seven comma-separated reset joint positions (rad).
+    std::string robotiq_transport; ///< Empty, "rtu", or "tcp".
+    std::string robotiq_endpoint;  ///< Serial device for RTU or hostname/address for TCP.
+    int robotiq_port = 502;        ///< Modbus TCP port.
+    int robotiq_baud_rate = 115200; ///< Modbus RTU baud rate.
+    int robotiq_slave_id = 9;      ///< Robotiq Modbus slave id.
+    int robotiq_poll_frequency = 50; ///< Gripper status polling frequency (Hz).
+    int robotiq_timeout_ms = 200;  ///< Modbus response timeout.
+    int robotiq_min_position_raw = 3; ///< Raw register value for fully open.
+    int robotiq_max_position_raw = 230; ///< Raw register value for fully closed.
+    float robotiq_default_speed = 1.0f; ///< Speed used by position-only public commands.
+    float robotiq_default_force = 1.0f; ///< Force used by position-only public commands.
 
     // Unified move-to-ready / emergency-recovery options. See macros above for descriptions.
     float move_to_ready_vel_rad_s_normal; ///< Healthy move-to-ready angular speed (rad/s).

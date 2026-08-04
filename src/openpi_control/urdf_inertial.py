@@ -53,6 +53,8 @@ def prepare_merged_urdf(
         ConfigurationError: If the effector mass model is missing or malformed,
             or the base URDF has no end link.
     """
+    if assets.urdf is None:
+        raise ConfigurationError(f"model {model!r} does not use a URDF")
     base_text = assets.urdf.read_text(encoding="utf-8")
     if effector_model:
         if assets.effector_model_config is None:

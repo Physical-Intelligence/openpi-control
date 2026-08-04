@@ -25,8 +25,10 @@ from openpi_control import (
     ArmMode,
     ArmRole,
     ArmSession,
+    FR3Connection,
     InputLayout,
     PositionCommand,
+    RobotiqConnection,
     SafetyLimits,
     SocketCanConnection,
 )
@@ -153,6 +155,60 @@ def fake_node(tmp_path, monkeypatch):
 
 def make_backend_config() -> ArmConfig:
     return ArmConfig("native-test", "Yam", SocketCanConnection("lo"))
+
+
+@pytest.mark.parametrize(
+    ("gripper", "expected_transport", "expected_endpoint"),
+    [
+        (RobotiqConnection.rtu("/dev/null"), "rtu", "/dev/null"),
+        (RobotiqConnection.tcp("192.168.1.12", port=1502), "tcp", "192.168.1.12"),
+    ],
+)
+def test_native_backend_forwards_fr3_and_robotiq_arguments(
+    monkeypatch,
+    gripper: RobotiqConnection,
+    expected_transport: str,
+    expected_endpoint: str,
+) -> None:
+    captured_args: list[str] = []
+    backend = NativeArmBackend()
+    config = ArmConfig(
+        "fr3-follower",
+        "FR3",
+        FR3Connection("192.168.1.10"),
+        effector_model="Robotiq",
+        effector_connection=gripper,
+    )
+
+    def capture_spawn(args, **_kwargs):
+        captured_args.extend(args)
+        raise RuntimeError("captured native arguments")
+
+    monkeypatch.setattr("openpi_control.native.platform.system", lambda: "Linux")
+    monkeypatch.setattr("openpi_control.native.native_executable", lambda: Path(sys.executable))
+    monkeypatch.setattr("openpi_control.native.subprocess.Popen", capture_spawn)
+
+    try:
+        with pytest.raises(RuntimeError, match="captured native arguments"):
+            backend.connect(
+                config,
+                ArmRole.FOLLOWER,
+                topics_for(f"fr3-{expected_transport}", "fr3-follower"),
+            )
+    finally:
+        backend.close()
+
+    def value_after(option: str) -> str:
+        return captured_args[captured_args.index(option) + 1]
+
+    assert value_after("--device_model") == "FR3"
+    assert value_after("--fr3_address") == "192.168.1.10"
+    assert value_after("--robotiq_transport") == expected_transport
+    assert value_after("--robotiq_endpoint") == expected_endpoint
+    assert value_after("--robotiq_port") == ("1502" if expected_transport == "tcp" else "502")
+    assert value_after("--algo_type") == "None"
+    assert "--control_port" not in captured_args
+    assert "--urdf_path" not in captured_args
 
 
 @pytest.mark.parametrize("safety_torque_mode", [False, True])
